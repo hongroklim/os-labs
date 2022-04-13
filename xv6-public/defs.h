@@ -122,7 +122,11 @@ void            wakeup(void*);
 int             yield(void);
 
 // scheduler.c
-int             getlev(void);
+struct proc*    nextproc(struct proc*);
+int             schpush(struct proc*);
+int             schpop(struct proc*);
+int             timeqt(struct proc*);
+void            schboost(int ticks);
 int             set_cpu_share(int share);
 
 // swtch.S
@@ -158,6 +162,7 @@ int             argptr(int, char**, int);
 int             argstr(int, char**);
 int             fetchint(uint, int*);
 int             fetchstr(uint, char**);
+int             getlev(void);
 void            syscall(void);
 
 // timer.c

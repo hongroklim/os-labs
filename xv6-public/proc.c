@@ -392,6 +392,13 @@ yield(void)
   return 0;
 }
 
+// wrapper for yield()
+int
+sys_yield(void)
+{
+  return yield();
+}
+
 // A fork child's very first scheduling by scheduler()
 // will swtch here.  "Return" to user space.
 void

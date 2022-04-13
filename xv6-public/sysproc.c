@@ -43,6 +43,19 @@ sys_getpid(void)
 }
 
 int
+getlev(void)
+{
+  return myproc()->qlev;
+}
+
+int
+sys_getlev(void)
+{
+  int lev = getlev();
+  return lev;
+}
+
+int
 sys_sbrk(void)
 {
   int addr;
