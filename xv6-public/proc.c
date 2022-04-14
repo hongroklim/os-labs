@@ -93,6 +93,7 @@ found:
 
   // Allocate kernel stack.
   if((p->kstack = kalloc()) == 0){
+    schpop(p);
     p->state = UNUSED;
     return 0;
   }
@@ -148,6 +149,7 @@ userinit(void)
   // because the assignment might not be atomic.
   acquire(&ptable.lock);
 
+  schpush(p);
   p->state = RUNNABLE;
 
   release(&ptable.lock);
@@ -214,6 +216,7 @@ fork(void)
 
   acquire(&ptable.lock);
 
+  schpush(np);
   np->state = RUNNABLE;
 
   release(&ptable.lock);
@@ -286,6 +289,7 @@ wait(void)
       havekids = 1;
       if(p->state == ZOMBIE){
         // Found one.
+        schpop(p);
         pid = p->pid;
         kfree(p->kstack);
         p->kstack = 0;
@@ -322,7 +326,7 @@ wait(void)
 void
 scheduler(void)
 {
-  struct proc *p;
+  struct proc *p = 0;
   struct cpu *c = mycpu();
   c->proc = 0;
   
@@ -332,10 +336,12 @@ scheduler(void)
 
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
-    for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->state != RUNNABLE)
-        continue;
+    //for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    //  if(p->state != RUNNABLE)
+    //    continue;
 
+    p = nextproc();
+    if(p != 0){
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
@@ -392,11 +398,19 @@ yield(void)
   return 0;
 }
 
-// wrapper for yield()
+// wrapper for yield().
 int
 sys_yield(void)
 {
   return yield();
+}
+
+void
+mlfqboost(int mlfqticks)
+{
+  acquire(&ptable.lock);
+  lockedboost(mlfqticks);
+  release(&ptable.lock);
 }
 
 // A fork child's very first scheduling by scheduler()

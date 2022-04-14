@@ -1,4 +1,7 @@
 OBJS = \
+  scheduler.o\
+	proc.o\
+	trap.o\
 	bio.o\
 	console.o\
 	exec.o\
@@ -14,7 +17,6 @@ OBJS = \
 	mp.o\
 	picirq.o\
 	pipe.o\
-	proc.o\
 	sleeplock.o\
 	spinlock.o\
 	string.o\
@@ -23,11 +25,9 @@ OBJS = \
 	sysfile.o\
 	sysproc.o\
 	trapasm.o\
-	trap.o\
 	uart.o\
 	vectors.o\
 	vm.o\
-  scheduler.o\
 
 # Cross-compiling (e.g., on Mac OS X)
 # TOOLPREFIX = i386-jos-elf

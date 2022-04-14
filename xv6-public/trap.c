@@ -13,6 +13,7 @@ struct gatedesc idt[256];
 extern uint vectors[];  // in vectors.S: array of 256 entry pointers
 struct spinlock tickslock;
 uint ticks;
+uint mlfqticks;
 
 void
 tvinit(void)
@@ -52,7 +53,15 @@ trap(struct trapframe *tf)
       acquire(&tickslock);
       ticks++;
       wakeup(&ticks);
+
+      if(myproc() != 0 && myproc()->qlev >= 0){
+        mlfqticks++;
+        myproc()->qelpsd++;
+      }
       release(&tickslock);
+
+      if(myproc() != 0 && myproc()->qlev >= 0)
+        mlfqboost(mlfqticks);
     }
     lapiceoi();
     break;
