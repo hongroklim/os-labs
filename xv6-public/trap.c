@@ -54,13 +54,13 @@ trap(struct trapframe *tf)
       ticks++;
       wakeup(&ticks);
 
-      if(myproc() != 0 && myproc()->qlev >= 0){
+      if(myproc() != 0 && myproc()->qlev >= 0 && myproc()->state == RUNNING){
         mlfqticks++;
         myproc()->qelpsd++;
       }
       release(&tickslock);
 
-      if(myproc() != 0 && myproc()->qlev >= 0)
+      if(myproc() != 0 && myproc()->qlev >= 0 && myproc()->state == RUNNING)
         mlfqelpsd(mlfqticks);
     }
     lapiceoi();

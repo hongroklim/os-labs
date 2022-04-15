@@ -51,9 +51,9 @@ struct proc {
   char name[16];               // Process name (debugging)
   int qlev;                    // If non-negative, level of MLFQ
   int qelpsd;                  // If non-negative, elapsed ticks in the same queue
-  struct proc *qnext;          // If non-zero, next process in the queue
-  struct proc *qprev;          // If non-zero, previous process in the queue
-  int cshr;                    // If positive, shared amount of CPU
+  int sshr;                    // If positive, shared amount of CPU
+  int spass;                   // If non-negative, total passes in ss
+  struct proc *qnext;          // If non-zero, next process in the process list
 };
 
 // Process memory is laid out contiguously, low addresses first:

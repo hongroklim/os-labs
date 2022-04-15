@@ -121,15 +121,15 @@ int             wait(void);
 void            wakeup(void*);
 int             yield(void);
 void            mlfqelpsd(int);
+int             set_cpu_share(int);
 
 // scheduler.c
 struct proc*    nextproc();
 int             qpush(struct proc*);
 int             qpop(struct proc*);
 int             qdown(struct proc*);
-int             timeqt(struct proc*);
-void            lockedboost(int);
-int             set_cpu_share(int);
+void            qboost(int);
+int             setsshr(struct proc*, int);
 
 // swtch.S
 void            swtch(struct context**, struct context*);

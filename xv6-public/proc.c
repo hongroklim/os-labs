@@ -409,8 +409,26 @@ mlfqelpsd(int mlfqticks)
 {
   acquire(&ptable.lock);
   qdown(myproc());
-  lockedboost(mlfqticks);
+  qboost(mlfqticks);
   release(&ptable.lock);
+}
+
+int
+set_cpu_share(int share)
+{
+  acquire(&ptable.lock);
+  int res = setsshr(myproc(), share);
+  release(&ptable.lock);
+  return res;
+}
+
+// wrapper for set_cpu_share()
+int
+sys_set_cpu_share(void)
+{
+  int share;
+  argint(0, &share);
+  return set_cpu_share(share);
 }
 
 // A fork child's very first scheduling by scheduler()

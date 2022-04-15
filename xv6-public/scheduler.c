@@ -4,14 +4,16 @@
 #include "mmu.h"
 #include "proc.h"
 
-#define Q0TICKS 1
-#define Q1TICKS 2
-#define Q2TICKS 4
+#define Q0TICKS 1         // Ticks of queue 0
+#define Q1TICKS 2         // Ticks of queue 1
+#define Q2TICKS 4         // Ticks of queue 2
 
-#define Q1ALTMT 5
-#define Q2ALTMT 10
+#define Q0ALTMT 5         // Time allotment of queue 0
+#define Q1ALTMT 10        // Time allotment of queue 1
 
-#define BOOST_PERIOD 100
+#define BSTPRD 100        // Boost period
+
+#define GTICKETS 10000      // Global tickets of ss
 
 struct {
   struct proc *queue[3];  // Priority Queues
@@ -19,12 +21,18 @@ struct {
   int lastpid;            // Last executed process ID
 } mlfq;
 
+struct {
+  struct proc *queue;     // Process queue
+  int shares;             // Total shares
+  int mlfqpass;           // Passes of MLFQ
+} stride;
+
 int
 qmove(struct proc *p, int level)
 {
   if(p->qlev < 0)
     return -1;
-  
+
   struct proc *ptr = mlfq.queue[level];
   if(ptr == 0){
     mlfq.queue[level] = p;
@@ -36,9 +44,11 @@ qmove(struct proc *p, int level)
   }
 
   p->qlev = level;
-  p->qprev = ptr;
   p->qnext = 0;
   p->qelpsd = 0;
+
+  if(ISDEBUG)
+    cprintf("qmove %p %d\n", p, level);
 
   return 0;
 }
@@ -47,7 +57,7 @@ int
 qpush(struct proc *p)
 {
   p->qlev = 0;
-  p->cshr = 0;
+  p->sshr = 0;
 
   if(ISDEBUG)
     cprintf("qpush %p\n", p);
@@ -55,20 +65,26 @@ qpush(struct proc *p)
   return qmove(p, 0);
 }
 
+// Both MLFQ and Stride are accepted.
 int
 qpop(struct proc *p)
 {
-  if(p->qlev < 0)
-    return -1;
+  struct proc **qhead = (p->qlev >= 0) ?
+    &mlfq.queue[p->qlev] : &stride.queue;
 
-  if(p->qnext != 0){
-    p->qnext->qprev = p->qprev;
+  struct proc *ptr = *qhead; 
+  if(p == *qhead){
+    *qhead = p->qnext;
+  }else{
+    for(;p != ptr->qnext;)
+      ptr = ptr->qnext;
+    
+    ptr->qnext = p->qnext;
   }
-  if(p->qprev != 0){
-    p->qprev->qnext = p->qnext;
-  }
-  if(p == mlfq.queue[p->qlev]){
-    mlfq.queue[p->qlev] = 0;
+
+  if(p->qlev < 0){
+    stride.shares -= p->sshr;
+    p->sshr = 0;
   }
 
   if(ISDEBUG)
@@ -78,9 +94,22 @@ qpop(struct proc *p)
 }
 
 int
+altmt(struct proc *p)
+{
+  switch(p->qlev){
+  case 0:
+    return Q0ALTMT;
+  case 1:
+    return Q1ALTMT;
+  default:
+    return -1;
+  }
+}
+
+int
 qdown(struct proc *p)
 {
-  if(p->qlev == 2 || p->qelpsd <= timeqt(p))
+  if(p->qlev == 2 || p->qelpsd <= altmt(p))
     return 1;
 
   qpop(p);
@@ -92,15 +121,33 @@ qdown(struct proc *p)
   return 0;
 }
 
+int
+timeqt(struct proc *p)
+{
+  switch(p->qlev){
+  case 0:
+    return Q0TICKS;
+  case 1:
+    return Q1TICKS;
+  case 2:
+    return Q2TICKS;
+  default:
+    return -1;
+  }
+}
+
 struct proc*
 nextmlfq(void)
 {
   int prevlev = -1;
   if(mlfq.lastproc != 0 && mlfq.lastproc->pid == mlfq.lastpid){
     // Return the last process which hasn't ended up
-    if(mlfq.lastproc->qelpsd % timeqt(mlfq.lastproc) > 0 &&
-       mlfq.lastproc->state == RUNNABLE)
+    if((mlfq.lastproc->qelpsd % timeqt(mlfq.lastproc)) > 0 &&
+       mlfq.lastproc->state == RUNNABLE){
+      if(ISDEBUG && 0)
+        cprintf("nextmlfq %p %d %d\n", mlfq.lastproc, mlfq.lastproc->qlev, mlfq.lastproc->qelpsd);
       return mlfq.lastproc;
+    }
 
     prevlev = mlfq.lastproc->qlev;
   }
@@ -139,47 +186,99 @@ nextmlfq(void)
   mlfq.lastproc = p;
   mlfq.lastpid = p->pid;
 
+  if(ISDEBUG && 0)
+    cprintf("nextmlfq %p %d %d\n", p, p->qlev, p->qelpsd);
+
   return p;
 }
 
 struct proc*
 nextproc(void)
 {
-  return nextmlfq();
+  struct proc *p = 0;
+
+  // Traverse stride queue and find the minimum passes.
+  struct proc *ptr = stride.queue;
+  for(;ptr != 0;){
+    if(ptr->state == RUNNABLE && (p == 0 || ptr->spass < p->spass))
+      p = ptr;
+
+    ptr = ptr->qnext;
+  }
+
+  if(p == 0 || stride.mlfqpass <= p->spass){
+    // Find from MLFQ
+    ptr = nextmlfq();
+    if(ptr != 0){
+      p = ptr;
+      stride.mlfqpass += (GTICKETS / (100-stride.shares));
+    }
+  }
+
+  if(ptr == 0 && p != 0){
+    // Select from stride
+    p->spass += (GTICKETS / p->sshr);
+  }
+
+  return p;
 }
 
 //ptable lock is required.
 void
-lockedboost(int mlfqticks)
+qboost(int mlfqticks)
 {
-  if(mlfqticks % BOOST_PERIOD != 0)
+  if(mlfqticks % BSTPRD != 0)
     return;
-}
+  
+  if(ISDEBUG && 0)
+    cprintf("boost start\n");
 
-int
-timeqt(struct proc *p)
-{
-  switch(p->qlev){
-  case 0:
-    return Q0TICKS;
-  case 1:
-    return Q1TICKS;
-  case 2:
-    return Q2TICKS;
-  default:
-    return -1;
+  struct proc *ptr;
+  int cnt;
+  int lev;
+  for(lev=1; lev<=2; lev++){
+    cnt = 0;
+    for(ptr=mlfq.queue[lev]; ptr!=0;){
+      if(ISDEBUG && 0)
+        cprintf("boost[%d] %p %d\n", lev, ptr, ptr->qlev);
+      qpop(ptr);
+      qmove(ptr, 0);
+      ptr=ptr->qnext;
+      cnt++;
+    }
+    if(ISDEBUG && 0)
+      cprintf("boost[%d] (%d)\n", lev, cnt);
   }
 }
 
 int
-set_cpu_share(int share)
+setsshr(struct proc *p, int share)
 {
-  return 0;
-}
+  // The maximum of total shares is 20.
+  if((stride.shares - p->sshr + share) > 20)
+    return -2;
 
-// wrapper for set_cpu_share()
-int
-sys_set_cpu_share(int share)
-{
-  return set_cpu_share(share);
+  int minpass = stride.mlfqpass;
+  struct proc *ptr = stride.queue;
+  for(;ptr != 0;){
+    if(ptr->spass < minpass)
+      minpass = ptr->spass;
+    ptr = ptr->qnext;
+  }
+
+  if(p->qlev >= 0){
+    qpop(p);
+    p->qlev = -1;
+    p->qelpsd = 0;
+    p->qnext = stride.queue;
+    stride.queue = p;
+    stride.shares += share;
+  }else{
+    stride.shares += (share - p->sshr);
+  }
+
+  p->sshr = share;
+  p->spass = minpass;
+
+  return 0;
 }
