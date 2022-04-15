@@ -10,6 +10,7 @@ $ mkcscope.sh
 * **Command** `cs find [s|g|c|t|e|f|i|d]`
 * **Hotkey** `ctrl-\, [s|g|c|t|e|f|i|d]`
 
+|     |          |                                                     |
 | --- | -------- | --------------------------------------------------- |
 | 's' | symbol   | find all references to the token under cursor       |
 | 'g' | global   | find global definition(s) of the token under cursor |
