@@ -120,12 +120,13 @@ void            userinit(void);
 int             wait(void);
 void            wakeup(void*);
 int             yield(void);
-void            mlfqboost(int);
+void            mlfqelpsd(int);
 
 // scheduler.c
 struct proc*    nextproc();
-int             schpush(struct proc*);
-int             schpop(struct proc*);
+int             qpush(struct proc*);
+int             qpop(struct proc*);
+int             qdown(struct proc*);
 int             timeqt(struct proc*);
 void            lockedboost(int);
 int             set_cpu_share(int);

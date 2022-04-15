@@ -93,7 +93,6 @@ found:
 
   // Allocate kernel stack.
   if((p->kstack = kalloc()) == 0){
-    schpop(p);
     p->state = UNUSED;
     return 0;
   }
@@ -149,7 +148,7 @@ userinit(void)
   // because the assignment might not be atomic.
   acquire(&ptable.lock);
 
-  schpush(p);
+  qpush(p);
   p->state = RUNNABLE;
 
   release(&ptable.lock);
@@ -216,7 +215,7 @@ fork(void)
 
   acquire(&ptable.lock);
 
-  schpush(np);
+  qpush(np);
   np->state = RUNNABLE;
 
   release(&ptable.lock);
@@ -289,7 +288,7 @@ wait(void)
       havekids = 1;
       if(p->state == ZOMBIE){
         // Found one.
-        schpop(p);
+        qpop(p);
         pid = p->pid;
         kfree(p->kstack);
         p->kstack = 0;
@@ -406,9 +405,10 @@ sys_yield(void)
 }
 
 void
-mlfqboost(int mlfqticks)
+mlfqelpsd(int mlfqticks)
 {
   acquire(&ptable.lock);
+  qdown(myproc());
   lockedboost(mlfqticks);
   release(&ptable.lock);
 }

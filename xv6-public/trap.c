@@ -61,7 +61,7 @@ trap(struct trapframe *tf)
       release(&tickslock);
 
       if(myproc() != 0 && myproc()->qlev >= 0)
-        mlfqboost(mlfqticks);
+        mlfqelpsd(mlfqticks);
     }
     lapiceoi();
     break;

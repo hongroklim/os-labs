@@ -19,20 +19,6 @@ struct {
   int lastpid;            // Last executed process ID
 } mlfq;
 
-void
-qpop(struct proc *p)
-{
-  if(p->qnext != 0){
-    p->qnext->qprev = p->qprev;
-  }
-  if(p->qprev != 0){
-    p->qprev->qnext = 0;
-  }
-  if(p == mlfq.queue[p->qlev]){
-    mlfq.queue[p->qlev] = 0;
-  }
-}
-
 int
 qmove(struct proc *p, int level)
 {
@@ -49,6 +35,7 @@ qmove(struct proc *p, int level)
     ptr->qnext = p;
   }
 
+  p->qlev = level;
   p->qprev = ptr;
   p->qnext = 0;
   p->qelpsd = 0;
@@ -57,34 +44,66 @@ qmove(struct proc *p, int level)
 }
 
 int
-schpush(struct proc *p)
+qpush(struct proc *p)
 {
   p->qlev = 0;
   p->cshr = 0;
 
-  cprintf("schpush %p\n", p);
+  if(ISDEBUG)
+    cprintf("qpush %p\n", p);
+
   return qmove(p, 0);
 }
 
 int
-schpop(struct proc *p)
+qpop(struct proc *p)
 {
   if(p->qlev < 0)
     return -1;
 
-  qpop(p);
+  if(p->qnext != 0){
+    p->qnext->qprev = p->qprev;
+  }
+  if(p->qprev != 0){
+    p->qprev->qnext = p->qnext;
+  }
+  if(p == mlfq.queue[p->qlev]){
+    mlfq.queue[p->qlev] = 0;
+  }
 
-  cprintf("schpop %p\n", p);
+  if(ISDEBUG)
+    cprintf("qpop %p\n", p);
+
+  return 0;
+}
+
+int
+qdown(struct proc *p)
+{
+  if(p->qlev == 2 || p->qelpsd <= timeqt(p))
+    return 1;
+
+  qpop(p);
+  qmove(p, p->qlev+1);
+
+  if(ISDEBUG)
+    cprintf("qdown %p %d\n", p, p->qlev);
+
   return 0;
 }
 
 struct proc*
 nextmlfq(void)
 {
-  //cprintf("nextmlfq\n");
-  int prevlev = -1; // If non-negative, revious level of executed.
-  if(mlfq.lastproc != 0 && mlfq.lastproc->pid == mlfq.lastpid)
+  int prevlev = -1;
+  if(mlfq.lastproc != 0 && mlfq.lastproc->pid == mlfq.lastpid){
+    // Return the last process which hasn't ended up
+    if(mlfq.lastproc->qelpsd % timeqt(mlfq.lastproc) > 0 &&
+       mlfq.lastproc->state == RUNNABLE)
+      return mlfq.lastproc;
+
     prevlev = mlfq.lastproc->qlev;
+  }
 
   struct proc *p = 0;
   int lev;
@@ -99,8 +118,6 @@ nextmlfq(void)
 
     if(p == 0)
       continue;
-
-    //cprintf("level %d %p %p\n", lev, p, p->qnext);
 
     // When the process is found at the same level.
     if(lev == prevlev && p->pid == mlfq.lastpid){
