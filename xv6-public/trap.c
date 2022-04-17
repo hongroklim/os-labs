@@ -56,7 +56,6 @@ trap(struct trapframe *tf)
 
       if(myproc() != 0 && myproc()->qlev >= 0 && myproc()->state == RUNNING){
         mlfqticks++;
-        myproc()->qelpsd++;
       }
       release(&tickslock);
 

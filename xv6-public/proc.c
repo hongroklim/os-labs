@@ -408,6 +408,7 @@ void
 mlfqelpsd(int mlfqticks)
 {
   acquire(&ptable.lock);
+  myproc()->qelpsd++;
   qdown(myproc());
   qboost(mlfqticks);
   release(&ptable.lock);

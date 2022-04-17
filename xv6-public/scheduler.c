@@ -13,7 +13,8 @@
 
 #define BSTPRD 100        // Boost period
 
-#define GTICKETS 10000      // Global tickets of ss
+#define SHAREMAX 80       // Maximum of CPU share of ss
+#define GTICKETS 10000    // Global tickets of ss
 
 struct {
   struct proc *queue[3];  // Priority Queues
@@ -254,8 +255,11 @@ qboost(int mlfqticks)
 int
 setsshr(struct proc *p, int share)
 {
-  // The maximum of total shares is 20.
-  if((stride.shares - p->sshr + share) > 20)
+  if(share <= 0)
+    return -1;
+
+  // Check the maximum of total shares.
+  if((stride.shares - p->sshr + share) > SHAREMAX)
     return -2;
 
   int minpass = stride.mlfqpass;
