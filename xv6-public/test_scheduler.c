@@ -14,13 +14,24 @@
 
 #define WORKLOAD_NUM	(4) /* The number of workloads */
 
+void
+waitfor(int index)
+{
+  int i;
+  int period = index * COUNT_PERIOD * 10;
+  for(i=0; i<period; i++)
+    printf(1, "", i, period);
+
+  __sync_synchronize();
+}
+
 /**
  * This function requests portion of CPU resources with given parameter
  * value by calling set_cpu_share() system call.
  * It reports the cnt value which have been accumulated during LIFETIME.
  */
 void
-test_stride(int portion)
+test_stride(int index, int portion)
 {
 	int cnt = 0;
 	int i = 0;
@@ -52,6 +63,7 @@ test_stride(int portion)
 	}
 
 	/* Report */
+  waitfor(index);
 	printf(1, "STRIDE(%d%%), cnt : %d\n", portion, cnt);
 
 	return;
@@ -66,7 +78,7 @@ test_stride(int portion)
  */
 enum { MLFQ_NONE, MLFQ_LEVCNT, MLFQ_YIELD, MLFQ_LEVCNT_YIELD };
 void
-test_mlfq(int type)
+test_mlfq(int index, int type)
 {
 	int cnt_level[MLFQ_LEVEL] = {0, 0, 0};
 	int cnt = 0;
@@ -106,6 +118,7 @@ test_mlfq(int type)
 	}
 
 	/* Report */
+  waitfor(index);
 	if (type == MLFQ_LEVCNT || type == MLFQ_LEVCNT_YIELD ) {
 		printf(1, "MLfQ(%s), cnt : %d, lev[0] : %d, lev[1] : %d, lev[2] : %d\n",
 				type == MLFQ_LEVCNT ? "compute" : "yield", cnt, cnt_level[0], cnt_level[1], cnt_level[2]);
@@ -118,7 +131,7 @@ test_mlfq(int type)
 }
 
 struct workload {
-	void (*func)(int);
+	void (*func)(int, int);
 	int arg;
 };
 
@@ -130,14 +143,18 @@ main(int argc, char *argv[])
 
 	/* Workload list */
 	struct workload workloads[WORKLOAD_NUM] = {
+    {test_mlfq, MLFQ_LEVCNT_YIELD},
+    {test_mlfq, MLFQ_LEVCNT_YIELD},
+    {test_mlfq, MLFQ_LEVCNT_YIELD},
+    {test_mlfq, MLFQ_LEVCNT_YIELD},
 		/* Process scheduled by Stride scheduler, use 5% of CPU resources */
-		{test_stride, 5},
+		//{test_stride, 5},
 		/* Process scheduled by Stride scheduler, use 15% of CPU resources */
-		{test_stride, 15},
+		//{test_stride, 15},
 		/* Process scheduled by MLFQ scheduler, does not yield itself */
-		{test_mlfq, MLFQ_LEVCNT},
+		//{test_mlfq, MLFQ_LEVCNT},
 		/* Process scheduled by MLFQ scheduler, does not yield itself */
-		{test_mlfq, MLFQ_NONE},
+		//{test_mlfq, MLFQ_NONE},
 	};
 
 	for (i = 0; i < WORKLOAD_NUM; i++) {
@@ -147,10 +164,10 @@ main(int argc, char *argv[])
 			continue;
 		} else if (pid == 0) {
 			/* Child */
-			void (*func)(int) = workloads[i].func;
+			void (*func)(int, int) = workloads[i].func;
 			int arg = workloads[i].arg;
 			/* Do this workload */
-			func(arg);
+			func(i, arg);
 			exit();
 		} else {
 			printf(1, "FAIL : fork\n");
@@ -161,6 +178,6 @@ main(int argc, char *argv[])
 	for (i = 0; i < WORKLOAD_NUM; i++) {
 		wait();
 	}
-
+  
 	exit();
 }

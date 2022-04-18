@@ -401,6 +401,12 @@ yield(void)
 int
 sys_yield(void)
 {
+  if(myproc()->qlev >= 0){
+    acquire(&ptable.lock);
+    myproc()->qelpsd++;
+    qdown(myproc());
+    release(&ptable.lock);
+  }
   return yield();
 }
 
