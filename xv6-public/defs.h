@@ -122,6 +122,9 @@ void            wakeup(void*);
 int             yield(void);
 void            mlfqelpsd(int);
 int             set_cpu_share(int);
+int             thread_create(thread_t*, void* (void*), void*);
+void            thread_exit(void*) __attribute__((noreturn));
+int             thread_join(thread_t, void**);
 
 // scheduler.c
 struct proc*    nextproc();
