@@ -4,14 +4,15 @@
 #include "mmu.h"
 #include "proc.h"
 
-#define Q0TICKS 1         // Ticks of queue 0
-#define Q1TICKS 2         // Ticks of queue 1
-#define Q2TICKS 4         // Ticks of queue 2
+#define Q0TICKS 5         // Ticks of queue 0
+#define Q1TICKS 10        // Ticks of queue 1
+#define Q2TICKS 20        // Ticks of queue 2
+#define SSTICKS 5         // Ticks of stride
 
-#define Q0ALTMT 5         // Time allotment of queue 0
-#define Q1ALTMT 10        // Time allotment of queue 1
+#define Q0ALTMT 20        // Time allotment of queue 0
+#define Q1ALTMT 40        // Time allotment of queue 1
 
-#define BSTPRD 100        // Boost period
+#define BSTPRD 200        // Boost period
 
 #define SHAREMAX 80       // Maximum of CPU share of ss
 #define GTICKETS 10000    // Global tickets of ss
@@ -26,6 +27,8 @@ struct {
   struct proc *queue;     // Process queue
   int shares;             // Total shares
   int mlfqpass;           // Passes of MLFQ
+  struct proc *lastproc;  // Last executed process
+  int lastpid;            // Last executed process ID
 } stride;
 
 int
@@ -147,10 +150,7 @@ nextmlfq(void)
   if(mlfq.lastproc != 0 && mlfq.lastproc->pid == mlfq.lastpid){
     // Return the last process which hasn't ended up
     if((mlfq.lastproc->qelpsd % timeqt(mlfq.lastproc)) > 0 &&
-       mlfq.lastproc->state == RUNNABLE){
-#ifdef SCHDEBUG
-        cprintf("nextmlfq %p %d %d\n", mlfq.lastproc, mlfq.lastproc->qlev, mlfq.lastproc->qelpsd);
-#endif
+        mlfq.lastproc->state == RUNNABLE){
       return mlfq.lastproc;
     }
 
@@ -201,29 +201,38 @@ nextmlfq(void)
 struct proc*
 nextproc(void)
 {
-  struct proc *p = 0;
+  struct proc *p = 0, *ptr;
 
-  // Traverse stride queue and find the minimum passes.
-  struct proc *ptr = stride.queue;
-  for(;ptr != 0;){
-    if(ptr->state == RUNNABLE && (p == 0 || ptr->spass < p->spass))
-      p = ptr;
+  if(stride.lastproc != 0 && stride.lastproc->pid == stride.lastpid &&
+      (stride.lastproc->qelpsd % SSTICKS) > 0 &&
+      stride.lastproc->state == RUNNABLE){
+    // Return the last process which hasn't ended up
+    p = stride.lastproc;
 
-    ptr = ptr->qnext;
-  }
+  }else{
+    // Traverse stride queue and find the minimum passes.
+    ptr = stride.queue;
+    for(;ptr != 0;){
+      if(ptr->state == RUNNABLE && (p == 0 || ptr->spass < p->spass))
+        p = ptr;
 
-  if(p == 0 || stride.mlfqpass <= p->spass){
-    // Find from MLFQ
-    ptr = nextmlfq();
-    if(ptr != 0){
-      p = ptr;
-      stride.mlfqpass += (GTICKETS / (100-stride.shares));
+      ptr = ptr->qnext;
     }
-  }
 
-  if(ptr == 0 && p != 0){
-    // Select from stride
-    p->spass += (GTICKETS / p->sshr);
+    if(p != 0 && stride.mlfqpass > p->spass){
+      // Select from stride
+      p->spass += (GTICKETS / p->sshr);
+
+      stride.lastproc = p;
+      stride.lastpid = p->pid;
+    }else{
+      // Find from MLFQ
+      ptr = nextmlfq();
+      if(ptr != 0){
+        p = ptr;
+        stride.mlfqpass += (GTICKETS / (100-stride.shares));
+      }
+    }
   }
 
   return p;

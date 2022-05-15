@@ -86,6 +86,7 @@ void*
 racingthreadmain(void *arg)
 {
   int tid = (int) arg;
+  /*
   int i;
   //int j;
   int tmp;
@@ -95,6 +96,7 @@ racingthreadmain(void *arg)
 	asm volatile("call %P0"::"i"(nop));
     gcnt = tmp;
   }
+  */
   thread_exit((void *)(tid+1));
 
   return 0;

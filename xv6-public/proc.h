@@ -59,6 +59,8 @@ struct proc {
   int spass;                   // If non-negative, total passes in ss
 
   struct proc *oproc;          // If non-zero, origin process
+  struct proc *schproc;        // If non-zero, scheduled process
+  int schidx;                  // Scheduled index
   int lwpidx;                  // If positive, LWP stack index
   uint sksz;                   // Stack size
   void *retval;                // Return value

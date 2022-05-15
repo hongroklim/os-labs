@@ -145,6 +145,7 @@ userinit(void)
 
   safestrcpy(p->name, "initcode", sizeof(p->name));
   p->cwd = namei("/");
+  p->schidx = 0;
   p->lwpidx = 0;
 
   // this assignment to p->state lets other cores
@@ -216,6 +217,7 @@ fork(void)
 
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
 
+  np->schidx = -1;
   np->lwpidx = 0;
 
   pid = np->pid;
@@ -320,10 +322,20 @@ wait(void)
     sleep(curproc, &ptable.lock);  //DOC: wait-sleep
   }
 }
+
+// Find the topmost process
+struct proc*
+schproc(struct proc *curproc)
+{
+  if(curproc->parent == initproc || curproc->oproc == 0)
+    return curproc;
+  else
+    return schproc(curproc->oproc);
+}
+  
 // Create a new process copying p as the parent.
 // Sets up stack to return as if from system call.
 // Caller must set state of returned proc to RUNNABLE.
-
 int
 thread_create(thread_t *thread, void* (*start_routine)(void *), void *arg)
 {
@@ -419,6 +431,7 @@ thread_create(thread_t *thread, void* (*start_routine)(void *), void *arg)
   np->sz = curproc->sz;
   np->sksz = sksz;
   np->parent = curproc;
+  np->schproc = schproc(curproc);
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
 
   // Update trap frame
@@ -479,7 +492,7 @@ thread_exit(void *retval)
   acquire(&ptable.lock);
 
   // Parent might be sleeping in wait().
-  wakeup1(curproc->parent);
+  wakeup1(curproc->oproc);
 
   // Pass abandoned children to init (or origin process).
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
@@ -502,13 +515,13 @@ thread_exit(void *retval)
   panic("zombie exit");
 }
 
-// Wait for a child process to exit and return its pid.
+// Wait for a LWP to exit and return zero.
 // Return -1 if this process has no children.
 int
 thread_join(thread_t thread, void **retval)
 {
+  int exist;
   struct proc *p;
-  int havekids, pid;
   struct proc *curproc = myproc();
 
 #ifdef LWPDEBUG
@@ -517,16 +530,27 @@ thread_join(thread_t thread, void **retval)
   
   acquire(&ptable.lock);
   for(;;){
-    // Scan through table looking for exited children.
-    havekids = 0;
+    exist = 0;
+    // Scan through table looking for exited LWP.
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->parent != curproc || p->pid != (int)thread)
+      if(p->pid != (int)thread)
         continue;
-      havekids = 1;
+      exist = 1;
+
+#ifdef LWPDEBUG
+  cprintf("[t_join] exist %p %d\n", curproc, p->pid);
+#endif
+
       if(p->state == ZOMBIE){
         // Found one.
+#ifdef LWPDEBUG
+        cprintf("[t_join] ZOMBIE %p %d\n", curproc, thread);
+#endif
+
         *retval = p->retval;
         p->oproc = 0;
+        p->schproc = 0;
+        p->schidx = 0;
         p->lwpidx = 0;
         kfree(p->kstack);
         p->kstack = 0;
@@ -539,15 +563,17 @@ thread_join(thread_t thread, void **retval)
         release(&ptable.lock);
 
 #ifdef LWPDEBUG
-  cprintf("[t_join] end %p %d\n", curproc, thread);
+        cprintf("[t_join] end %p %d\n", curproc, thread);
 #endif
 
-        return pid;
+        return 0;
+      }else{
+        break;
       }
     }
 
-    // No point waiting if we don't have any children.
-    if(!havekids || curproc->killed){
+    // No point waiting if we don't have a thread.
+    if(!exist || curproc->killed){
       release(&ptable.lock);
       return -1;
     }
@@ -555,6 +581,29 @@ thread_join(thread_t thread, void **retval)
     // Wait for children to exit.  (See wakeup1 call in proc_exit.)
     sleep(curproc, &ptable.lock);  //DOC: wait-sleep
   }
+}
+
+struct proc*
+nextlwp(struct proc *schproc)
+{
+  int i, schidx = -1;
+  struct proc *p, *nextproc = 0;
+
+  for(i = schproc->schidx+1; i < NPROC; i++){
+    p = &ptable.proc[i];
+    if(p->schproc == schproc && p->state == RUNNABLE){
+      nextproc = p;
+      schidx = i;
+      break;
+    }
+  }
+
+  if(schidx == -1)
+    nextproc = schproc;
+
+  schproc->schidx = schidx;
+
+  return nextproc;
 }
 
 //PAGEBREAK: 42
@@ -584,6 +633,9 @@ scheduler(void)
 
     p = nextproc();
     if(p != 0){
+      // Select next LWP if available
+      p = nextlwp(p);
+
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
@@ -657,9 +709,15 @@ void
 mlfqelpsd(int mlfqticks)
 {
   acquire(&ptable.lock);
-  myproc()->qelpsd++;
-  qdown(myproc());
+  
+  struct proc *schproc = myproc()->schproc;
+  if(schproc == 0)
+    schproc = myproc();
+
+  schproc->qelpsd++;
+  qdown(schproc);
   qboost(mlfqticks);
+
   release(&ptable.lock);
 }
 
