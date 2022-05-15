@@ -48,8 +48,9 @@ qmove(struct proc *p, int level)
   p->qnext = 0;
   p->qelpsd = 0;
 
-  if(ISDEBUG)
+#ifdef SCHDEBUG
     cprintf("qmove %p %d\n", p, level);
+#endif
 
   return 0;
 }
@@ -60,8 +61,9 @@ qpush(struct proc *p)
   p->qlev = 0;
   p->sshr = 0;
 
-  if(ISDEBUG)
+#ifdef SCHDEBUG
     cprintf("qpush %p\n", p);
+#endif
 
   return qmove(p, 0);
 }
@@ -88,9 +90,9 @@ qpop(struct proc *p)
     p->sshr = 0;
   }
 
-  if(ISDEBUG)
+#ifdef SCHDEBUG
     cprintf("qpop %p\n", p);
-
+#endif
   return 0;
 }
 
@@ -116,8 +118,9 @@ qdown(struct proc *p)
   qpop(p);
   qmove(p, p->qlev+1);
 
-  if(ISDEBUG)
+#ifdef SCHDEBUG
     cprintf("qdown %p %d\n", p, p->qlev);
+#endif
 
   return 0;
 }
@@ -145,8 +148,9 @@ nextmlfq(void)
     // Return the last process which hasn't ended up
     if((mlfq.lastproc->qelpsd % timeqt(mlfq.lastproc)) > 0 &&
        mlfq.lastproc->state == RUNNABLE){
-      if(ISDEBUG && 0)
+#ifdef SCHDEBUG
         cprintf("nextmlfq %p %d %d\n", mlfq.lastproc, mlfq.lastproc->qlev, mlfq.lastproc->qelpsd);
+#endif
       return mlfq.lastproc;
     }
 
@@ -187,8 +191,9 @@ nextmlfq(void)
   mlfq.lastproc = p;
   mlfq.lastpid = p->pid;
 
-  if(ISDEBUG && 0)
+#ifdef SCHDEBUG
     cprintf("nextmlfq %p %d %d\n", p, p->qlev, p->qelpsd);
+#endif
 
   return p;
 }
@@ -231,8 +236,9 @@ qboost(int mlfqticks)
   if(mlfqticks % BSTPRD != 0)
     return;
   
-  if(ISDEBUG && 0)
+#ifdef SCHDEBUG
     cprintf("boost start\n");
+#endif
 
   struct proc *ptr;
   int cnt;
@@ -240,15 +246,17 @@ qboost(int mlfqticks)
   for(lev=1; lev<=2; lev++){
     cnt = 0;
     for(ptr=mlfq.queue[lev]; ptr!=0;){
-      if(ISDEBUG && 0)
+#ifdef SCHDEBUG
         cprintf("boost[%d] %p %d\n", lev, ptr, ptr->qlev);
+#endif
       qpop(ptr);
       qmove(ptr, 0);
       ptr=ptr->qnext;
       cnt++;
     }
-    if(ISDEBUG && 0)
+#ifdef SCHDEBUG
       cprintf("boost[%d] (%d)\n", lev, cnt);
+#endif
   }
 }
 

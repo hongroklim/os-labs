@@ -12,6 +12,10 @@ struct {
   struct proc proc[NPROC];
 } ptable;
 
+struct {
+  struct spinlock lock;
+} lwpgroup;
+
 static struct proc *initproc;
 
 int nextpid = 1;
@@ -324,24 +328,73 @@ int
 thread_create(thread_t *thread, void* (*start_routine)(void *), void *arg)
 {
   // Based on fork()
-  int i;
-  uint sz, sp, ustack[2];
-  struct proc *np;
+  int i, sidx[NPROC] = {0};
+  uint sksz, sp, ustack[2];
+  struct proc *np, *p;
   struct proc *curproc = myproc();
 
-  // Allocate process.
-  if((np = allocproc()) == 0){
+#ifdef LWPDEBUG
+  cprintf("[t_create] start from %p\n", curproc);
+#endif
+
+  // Avoid double-mark in stack index
+  acquire(&lwpgroup.lock);
+
+  // Mark used stack index
+  acquire(&ptable.lock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->oproc == curproc)
+      sidx[p->lwpidx] = 1;
+  }
+  release(&ptable.lock);
+
+  // Get available stack index
+  for(i = 1; i < NPROC; i++){
+    if(sidx[i] == 0)
+      break;
+  }
+
+  // No available stack index
+  if(i == NPROC){
+    release(&lwpgroup.lock);
+#ifdef LWPDEBUG
+    cprintf("[t_create] no stack index\n");
+#endif
     return -1;
   }
+
+  // Allocate process
+  if((np = allocproc()) == 0){
+    release(&lwpgroup.lock);
+#ifdef LWPDEBUG
+    cprintf("[t_create] fail allocproc()\n");
+#endif
+    return -1;
+  }
+
+  // Update lwp
+  np->oproc = curproc;
+  np->lwpidx = i;
+
+  release(&lwpgroup.lock);
 
   // Based on exec()
   // Allocate stack segment
-  sz = PGROUNDUP(curproc->sz);
-  if((sz = allocuvm(curproc->pgdir, sz, sz + 2*PGSIZE)) == 0){
+  sksz = PGROUNDDOWN(KERNBASE - ((np->lwpidx+1) * 2*PGSIZE));
+#ifdef LWPDEBUG
+  cprintf("[t_create] allocuvm %p %p %d\n", np->oproc, np, np->lwpidx);
+#endif
+  if((sksz = allocuvm(curproc->pgdir, sksz, sksz + 2*PGSIZE)) == 0){
+    kfree(np->kstack);
+    np->kstack = 0;
+    np->state = UNUSED;
+#ifdef LWPDEBUG
+    cprintf("[t_create] allocuvm fail\n");
+#endif
     return -1;
   }
-  clearpteu(curproc->pgdir, (char*)(sz - 2*PGSIZE));
-  sp = sz;
+  clearpteu(curproc->pgdir, (char*)(sksz - 2*PGSIZE));
+  sp = sksz;
 
   // Set stack segment
   ustack[0] = 0xffffffff;
@@ -350,13 +403,21 @@ thread_create(thread_t *thread, void* (*start_routine)(void *), void *arg)
   sp -= 2*4;
 
   if(copyout(curproc->pgdir, sp, ustack, 2*4) < 0){
-    deallocuvm(curproc->pgdir, sz + 2*PGSIZE, sz);
+    kfree(np->kstack);
+    np->kstack = 0;
+    np->state = UNUSED;
+
+    deallocuvm(curproc->pgdir, sksz + 2*PGSIZE, sksz);
+#ifdef LWPDEBUG
+    cprintf("[t_create] copyout fail\n");
+#endif
     return -1;
   }
 
   // Update proc
   np->pgdir = curproc->pgdir;
-  np->sz = sz;
+  np->sz = curproc->sz;
+  np->sksz = sksz;
   np->parent = curproc;
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
 
@@ -377,6 +438,11 @@ thread_create(thread_t *thread, void* (*start_routine)(void *), void *arg)
 
   release(&ptable.lock);
 
+  *thread = np->pid;
+
+#ifdef LWPDEBUG
+  cprintf("[t_create] end %p %d\n", curproc, np->pid);
+#endif
   return 0;
 }
 
@@ -389,6 +455,10 @@ thread_exit(void *retval)
   struct proc *curproc = myproc();
   struct proc *p;
   int fd;
+
+#ifdef LWPDEBUG
+  cprintf("[t_exit] start %d\n", curproc->pid);
+#endif
 
   if(curproc == initproc)
     panic("init exiting");
@@ -411,10 +481,10 @@ thread_exit(void *retval)
   // Parent might be sleeping in wait().
   wakeup1(curproc->parent);
 
-  // Pass abandoned children to init.
+  // Pass abandoned children to init (or origin process).
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
     if(p->parent == curproc){
-      p->parent = initproc;
+      p->parent = (p->lwpidx == 0) ? initproc : curproc->oproc;
       if(p->state == ZOMBIE)
         wakeup1(initproc);
     }
@@ -422,6 +492,12 @@ thread_exit(void *retval)
 
   // Jump into the scheduler, never to return.
   curproc->state = ZOMBIE;
+  curproc->retval = retval;
+
+#ifdef LWPDEBUG
+  cprintf("[t_exit] end %d\n", curproc->pid);
+#endif
+
   sched();
   panic("zombie exit");
 }
@@ -434,28 +510,38 @@ thread_join(thread_t thread, void **retval)
   struct proc *p;
   int havekids, pid;
   struct proc *curproc = myproc();
+
+#ifdef LWPDEBUG
+  cprintf("[t_join] start %p %d\n", curproc, thread);
+#endif
   
   acquire(&ptable.lock);
   for(;;){
     // Scan through table looking for exited children.
     havekids = 0;
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->parent != curproc)
+      if(p->parent != curproc || p->pid != (int)thread)
         continue;
       havekids = 1;
       if(p->state == ZOMBIE){
         // Found one.
-        qpop(p);
-        pid = p->pid;
+        *retval = p->retval;
+        p->oproc = 0;
+        p->lwpidx = 0;
         kfree(p->kstack);
         p->kstack = 0;
-        freevm(p->pgdir);
+        deallocuvm(curproc->pgdir, curproc->sksz + 2*PGSIZE, curproc->sksz);
         p->pid = 0;
         p->parent = 0;
         p->name[0] = 0;
         p->killed = 0;
         p->state = UNUSED;
         release(&ptable.lock);
+
+#ifdef LWPDEBUG
+  cprintf("[t_join] end %p %d\n", curproc, thread);
+#endif
+
         return pid;
       }
     }

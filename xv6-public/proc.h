@@ -58,7 +58,10 @@ struct proc {
   int sshr;                    // If positive, shared amount of CPU
   int spass;                   // If non-negative, total passes in ss
 
-  int lwpidx;                  // If non-zero, index of LWP
+  struct proc *oproc;          // If non-zero, origin process
+  int lwpidx;                  // If positive, LWP stack index
+  uint sksz;                   // Stack size
+  void *retval;                // Return value
 };
 
 // Process memory is laid out contiguously, low addresses first:
