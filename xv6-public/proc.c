@@ -141,6 +141,7 @@ userinit(void)
 
   safestrcpy(p->name, "initcode", sizeof(p->name));
   p->cwd = namei("/");
+  p->lwpidx = 0;
 
   // this assignment to p->state lets other cores
   // run this process. the acquire forces the above
@@ -210,6 +211,8 @@ fork(void)
   np->cwd = idup(curproc->cwd);
 
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
+
+  np->lwpidx = 0;
 
   pid = np->pid;
 
@@ -320,7 +323,9 @@ wait(void)
 int
 thread_create(thread_t *thread, void* (*start_routine)(void *), void *arg)
 {
-  int i, pid;
+  // Based on fork()
+  int i;
+  uint sz, sp, ustack[2];
   struct proc *np;
   struct proc *curproc = myproc();
 
@@ -329,37 +334,50 @@ thread_create(thread_t *thread, void* (*start_routine)(void *), void *arg)
     return -1;
   }
 
-  // Copy process state from proc.
-  if((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0){
-    kfree(np->kstack);
-    np->kstack = 0;
-    np->state = UNUSED;
+  // Based on exec()
+  // Allocate stack segment
+  sz = PGROUNDUP(curproc->sz);
+  if((sz = allocuvm(curproc->pgdir, sz, sz + 2*PGSIZE)) == 0){
     return -1;
   }
-  np->sz = curproc->sz;
+  clearpteu(curproc->pgdir, (char*)(sz - 2*PGSIZE));
+  sp = sz;
+
+  // Set stack segment
+  ustack[0] = 0xffffffff;
+  ustack[1] = (uint)arg;
+
+  sp -= 2*4;
+
+  if(copyout(curproc->pgdir, sp, ustack, 2*4) < 0){
+    deallocuvm(curproc->pgdir, sz + 2*PGSIZE, sz);
+    return -1;
+  }
+
+  // Update proc
+  np->pgdir = curproc->pgdir;
+  np->sz = sz;
   np->parent = curproc;
+  safestrcpy(np->name, curproc->name, sizeof(curproc->name));
+
+  // Update trap frame
   *np->tf = *curproc->tf;
+  np->tf->eip = (uint)start_routine;
+  np->tf->esp = sp;
 
-  // Clear %eax so that fork returns 0 in the child.
-  np->tf->eax = 0;
-
+  // Copy file descriptor
   for(i = 0; i < NOFILE; i++)
     if(curproc->ofile[i])
       np->ofile[i] = filedup(curproc->ofile[i]);
   np->cwd = idup(curproc->cwd);
 
-  safestrcpy(np->name, curproc->name, sizeof(curproc->name));
-
-  pid = np->pid;
-
   acquire(&ptable.lock);
 
-  qpush(np);
   np->state = RUNNABLE;
 
   release(&ptable.lock);
 
-  return pid;
+  return 0;
 }
 
 // Exit the current process.  Does not return.
