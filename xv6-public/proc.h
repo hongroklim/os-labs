@@ -49,11 +49,21 @@ struct proc {
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
   char name[16];               // Process name (debugging)
+
+  struct proc *qnext;          // If non-zero, next process in the process list
+
   int qlev;                    // If non-negative, level of MLFQ
   int qelpsd;                  // If non-negative, elapsed ticks in the same queue
+
   int sshr;                    // If positive, shared amount of CPU
   int spass;                   // If non-negative, total passes in ss
-  struct proc *qnext;          // If non-zero, next process in the process list
+
+  struct proc *oproc;          // If non-zero, origin process
+  struct proc *schproc;        // If non-zero, scheduled process
+  int schidx;                  // Scheduled index
+  int lwpidx;                  // If positive, LWP stack index
+  uint sksz;                   // Stack size
+  void *retval;                // Return value
 };
 
 // Process memory is laid out contiguously, low addresses first:

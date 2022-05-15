@@ -12,6 +12,10 @@ struct {
   struct proc proc[NPROC];
 } ptable;
 
+struct {
+  struct spinlock lock;
+} lwpgroup;
+
 static struct proc *initproc;
 
 int nextpid = 1;
@@ -141,6 +145,8 @@ userinit(void)
 
   safestrcpy(p->name, "initcode", sizeof(p->name));
   p->cwd = namei("/");
+  p->schidx = 0;
+  p->lwpidx = 0;
 
   // this assignment to p->state lets other cores
   // run this process. the acquire forces the above
@@ -210,6 +216,9 @@ fork(void)
   np->cwd = idup(curproc->cwd);
 
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
+
+  np->schidx = -1;
+  np->lwpidx = 0;
 
   pid = np->pid;
 
@@ -313,53 +322,148 @@ wait(void)
     sleep(curproc, &ptable.lock);  //DOC: wait-sleep
   }
 }
+
+// Find the topmost process
+struct proc*
+schproc(struct proc *curproc)
+{
+  if(curproc->parent == initproc || curproc->oproc == 0)
+    return curproc;
+  else
+    return schproc(curproc->oproc);
+}
+  
 // Create a new process copying p as the parent.
 // Sets up stack to return as if from system call.
 // Caller must set state of returned proc to RUNNABLE.
-
 int
 thread_create(thread_t *thread, void* (*start_routine)(void *), void *arg)
 {
-  int i, pid;
-  struct proc *np;
+  // Based on fork()
+  int i, sidx[NPROC] = {0};
+  uint sksz, sp, ustack[2];
+  struct proc *np, *p;
   struct proc *curproc = myproc();
 
-  // Allocate process.
-  if((np = allocproc()) == 0){
+#ifdef LWPDEBUG
+  cprintf("[t_create] start from %p\n", curproc);
+#endif
+
+  // Avoid double-mark in stack index
+  acquire(&lwpgroup.lock);
+
+  // Mark used stack index
+  acquire(&ptable.lock);
+  for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
+    if(p->oproc == curproc)
+      sidx[p->lwpidx] = 1;
+  }
+  release(&ptable.lock);
+
+  // Get available stack index
+  for(i = 1; i < NPROC; i++){
+    if(sidx[i] == 0)
+      break;
+  }
+
+  // No available stack index
+  if(i == NPROC){
+    release(&lwpgroup.lock);
+#ifdef LWPDEBUG
+    cprintf("[t_create] no stack index\n");
+#endif
     return -1;
   }
 
-  // Copy process state from proc.
-  if((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0){
+  // Allocate process
+  if((np = allocproc()) == 0){
+    release(&lwpgroup.lock);
+#ifdef LWPDEBUG
+    cprintf("[t_create] fail allocproc()\n");
+#endif
+    return -1;
+  }
+
+  // Update lwp
+  np->oproc = curproc;
+  np->lwpidx = i;
+
+
+  // Based on exec()
+  // Allocate stack segment
+  //sksz = (KERNBASE - ((np->lwpidx+1) * 2*PGSIZE));
+  //sksz = curproc->sz + ((np->lwpidx-1) * 2*PGSIZE);
+  sksz = curproc->sz + 2*PGSIZE;
+#ifdef LWPDEBUG
+  cprintf("[t_create] allocuvm %p %p %d\n", np->oproc, np, np->lwpidx);
+#endif
+  if((sksz = allocuvm(curproc->pgdir, sksz, sksz + 2*PGSIZE)) == 0){
     kfree(np->kstack);
     np->kstack = 0;
     np->state = UNUSED;
+#ifdef LWPDEBUG
+    cprintf("[t_create] allocuvm fail\n");
+#endif
+    release(&lwpgroup.lock);
     return -1;
   }
-  np->sz = curproc->sz;
+  clearpteu(curproc->pgdir, (char*)(sksz - 2*PGSIZE));
+  sp = sksz;
+
+  // Update curproc
+  curproc->sz = sksz;
+
+  release(&lwpgroup.lock);
+
+  // Set stack segment
+  ustack[0] = 0xffffffff;
+  ustack[1] = (uint)arg;
+
+  sp -= 2*4;
+
+  if(copyout(curproc->pgdir, sp, ustack, 2*4) < 0){
+    kfree(np->kstack);
+    np->kstack = 0;
+    np->state = UNUSED;
+
+    deallocuvm(curproc->pgdir, sksz + 2*PGSIZE, sksz);
+#ifdef LWPDEBUG
+    cprintf("[t_create] copyout fail\n");
+#endif
+    return -1;
+  }
+
+  // Update proc
+  np->pgdir = curproc->pgdir;
+  np->sz = sksz;
+  np->sksz = sksz;
   np->parent = curproc;
+  np->schproc = schproc(curproc);
+  safestrcpy(np->name, curproc->name, sizeof(curproc->name));
+
+  // Update trap frame
   *np->tf = *curproc->tf;
+  np->tf->eip = (uint)start_routine;
+  np->tf->esp = sp;
 
-  // Clear %eax so that fork returns 0 in the child.
-  np->tf->eax = 0;
-
+  // Copy file descriptor
   for(i = 0; i < NOFILE; i++)
     if(curproc->ofile[i])
       np->ofile[i] = filedup(curproc->ofile[i]);
   np->cwd = idup(curproc->cwd);
 
-  safestrcpy(np->name, curproc->name, sizeof(curproc->name));
-
-  pid = np->pid;
-
   acquire(&ptable.lock);
 
-  qpush(np);
   np->state = RUNNABLE;
 
   release(&ptable.lock);
 
-  return pid;
+  *thread = np->pid;
+
+#ifdef LWPDEBUG
+  cprintf("[t_create] end %p %d\n", curproc, np->pid);
+#endif
+  return 0;
 }
 
 // Exit the current process.  Does not return.
@@ -372,8 +476,8 @@ thread_exit(void *retval)
   struct proc *p;
   int fd;
 
-  if(curproc == initproc)
-    panic("init exiting");
+  if(curproc->oproc == 0)
+    panic("non-LWP exiting");
 
   // Close all open files.
   for(fd = 0; fd < NOFILE; fd++){
@@ -391,66 +495,120 @@ thread_exit(void *retval)
   acquire(&ptable.lock);
 
   // Parent might be sleeping in wait().
-  wakeup1(curproc->parent);
+  wakeup1(curproc->oproc);
 
   // Pass abandoned children to init.
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-    if(p->parent == curproc){
-      p->parent = initproc;
+    if(p->oproc == curproc){
+      p->parent = curproc->oproc;
       if(p->state == ZOMBIE)
-        wakeup1(initproc);
+        wakeup1(curproc->oproc);
     }
   }
 
   // Jump into the scheduler, never to return.
+  curproc->retval = retval;
   curproc->state = ZOMBIE;
   sched();
   panic("zombie exit");
 }
 
-// Wait for a child process to exit and return its pid.
+// Wait for a LWP to exit and return zero.
 // Return -1 if this process has no children.
 int
 thread_join(thread_t thread, void **retval)
 {
+  int exist;
   struct proc *p;
-  int havekids, pid;
   struct proc *curproc = myproc();
+
+#ifdef LWPDEBUG
+  cprintf("[t_join] start %p %d\n", curproc, thread);
+#endif
   
   acquire(&ptable.lock);
   for(;;){
-    // Scan through table looking for exited children.
-    havekids = 0;
+    exist = 0;
+    // Scan through table looking for exited LWP.
     for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-      if(p->parent != curproc)
+      if(p->pid != (int)thread)
         continue;
-      havekids = 1;
+      exist = 1;
+
+#ifdef LWPDEBUG
+  cprintf("[t_join] exist %p %d\n", curproc, p->pid);
+#endif
+
       if(p->state == ZOMBIE){
         // Found one.
-        qpop(p);
-        pid = p->pid;
+#ifdef LWPDEBUG
+        cprintf("[t_join] ZOMBIE %p %d\n", curproc, thread);
+        cprintf("[t_join] retval %p %d %d\n", curproc, thread, (int)*retval);
+#endif
+
+        *retval = p->retval;
+        p->oproc = 0;
+        p->schproc = 0;
+        p->schidx = 0;
+        p->lwpidx = 0;
         kfree(p->kstack);
         p->kstack = 0;
-        freevm(p->pgdir);
+        deallocuvm(curproc->pgdir, curproc->sksz + 2*PGSIZE, curproc->sksz);
         p->pid = 0;
         p->parent = 0;
         p->name[0] = 0;
         p->killed = 0;
         p->state = UNUSED;
         release(&ptable.lock);
-        return pid;
+
+#ifdef LWPDEBUG
+        cprintf("[t_join] end %p %d\n", curproc, thread);
+#endif
+
+        return 0;
+      }else{
+        break;
       }
     }
 
-    // No point waiting if we don't have any children.
-    if(!havekids || curproc->killed){
+    // No point waiting if we don't have a thread.
+    if(!exist || curproc->killed){
       release(&ptable.lock);
       return -1;
     }
 
     // Wait for children to exit.  (See wakeup1 call in proc_exit.)
+#ifdef LWPDEBUG
+    cprintf("[t_join] sleep before %p %d\n", curproc, thread);
+#endif
     sleep(curproc, &ptable.lock);  //DOC: wait-sleep
+#ifdef LWPDEBUG
+    cprintf("[t_join] sleep after %p %d\n", curproc, thread);
+#endif
   }
+}
+
+struct proc*
+nextlwp(struct proc *schproc)
+{
+  int i, schidx = -1;
+  struct proc *p, *nextproc = 0;
+
+  for(i = schproc->schidx+1; i < NPROC; i++){
+    p = &ptable.proc[i];
+    if(p->schproc == schproc && p->state == RUNNABLE){
+      nextproc = p;
+      schidx = i;
+      break;
+    }
+  }
+
+  if(schidx == -1)
+    nextproc = schproc;
+
+  schproc->schidx = schidx;
+
+  return nextproc;
 }
 
 //PAGEBREAK: 42
@@ -480,6 +638,9 @@ scheduler(void)
 
     p = nextproc();
     if(p != 0){
+      // Select next LWP if available
+      p = nextlwp(p);
+
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
       // before jumping back to us.
@@ -553,9 +714,15 @@ void
 mlfqelpsd(int mlfqticks)
 {
   acquire(&ptable.lock);
-  myproc()->qelpsd++;
-  qdown(myproc());
+  
+  struct proc *schproc = myproc()->schproc;
+  if(schproc == 0)
+    schproc = myproc();
+
+  schproc->qelpsd++;
+  qdown(schproc);
   qboost(mlfqticks);
+
   release(&ptable.lock);
 }
 
