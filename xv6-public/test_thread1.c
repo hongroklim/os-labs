@@ -2,7 +2,7 @@
 #include "stat.h"
 #include "user.h"
 
-#define NUM_THREAD 10
+#define NUM_THREAD 2
 #define NTEST 5
 
 // Show race condition
@@ -86,17 +86,16 @@ void*
 racingthreadmain(void *arg)
 {
   int tid = (int) arg;
-  /*
   int i;
   //int j;
   int tmp;
-  for (i = 0; i < 10000000; i++){
+  //for (i = 0; i < 10000000; i++){
+  for (i = 0; i < 1000; i++){
     tmp = gcnt;
     tmp++;
 	asm volatile("call %P0"::"i"(nop));
     gcnt = tmp;
   }
-  */
   thread_exit((void *)(tid+1));
 
   return 0;

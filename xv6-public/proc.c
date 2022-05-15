@@ -388,11 +388,12 @@ thread_create(thread_t *thread, void* (*start_routine)(void *), void *arg)
   np->oproc = curproc;
   np->lwpidx = i;
 
-  release(&lwpgroup.lock);
 
   // Based on exec()
   // Allocate stack segment
-  sksz = PGROUNDDOWN(KERNBASE - ((np->lwpidx+1) * 2*PGSIZE));
+  //sksz = (KERNBASE - ((np->lwpidx+1) * 2*PGSIZE));
+  //sksz = curproc->sz + ((np->lwpidx-1) * 2*PGSIZE);
+  sksz = curproc->sz + 2*PGSIZE;
 #ifdef LWPDEBUG
   cprintf("[t_create] allocuvm %p %p %d\n", np->oproc, np, np->lwpidx);
 #endif
@@ -403,10 +404,16 @@ thread_create(thread_t *thread, void* (*start_routine)(void *), void *arg)
 #ifdef LWPDEBUG
     cprintf("[t_create] allocuvm fail\n");
 #endif
+    release(&lwpgroup.lock);
     return -1;
   }
   clearpteu(curproc->pgdir, (char*)(sksz - 2*PGSIZE));
   sp = sksz;
+
+  // Update curproc
+  curproc->sz = sksz;
+
+  release(&lwpgroup.lock);
 
   // Set stack segment
   ustack[0] = 0xffffffff;
@@ -428,7 +435,7 @@ thread_create(thread_t *thread, void* (*start_routine)(void *), void *arg)
 
   // Update proc
   np->pgdir = curproc->pgdir;
-  np->sz = curproc->sz;
+  np->sz = sksz;
   np->sksz = sksz;
   np->parent = curproc;
   np->schproc = schproc(curproc);
@@ -469,12 +476,8 @@ thread_exit(void *retval)
   struct proc *p;
   int fd;
 
-#ifdef LWPDEBUG
-  cprintf("[t_exit] start %d\n", curproc->pid);
-#endif
-
-  if(curproc == initproc)
-    panic("init exiting");
+  if(curproc->oproc == 0)
+    panic("non-LWP exiting");
 
   // Close all open files.
   for(fd = 0; fd < NOFILE; fd++){
@@ -494,23 +497,18 @@ thread_exit(void *retval)
   // Parent might be sleeping in wait().
   wakeup1(curproc->oproc);
 
-  // Pass abandoned children to init (or origin process).
+  // Pass abandoned children to init.
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-    if(p->parent == curproc){
-      p->parent = (p->lwpidx == 0) ? initproc : curproc->oproc;
+    if(p->oproc == curproc){
+      p->parent = curproc->oproc;
       if(p->state == ZOMBIE)
-        wakeup1(initproc);
+        wakeup1(curproc->oproc);
     }
   }
 
   // Jump into the scheduler, never to return.
-  curproc->state = ZOMBIE;
   curproc->retval = retval;
-
-#ifdef LWPDEBUG
-  cprintf("[t_exit] end %d\n", curproc->pid);
-#endif
-
+  curproc->state = ZOMBIE;
   sched();
   panic("zombie exit");
 }
@@ -545,6 +543,7 @@ thread_join(thread_t thread, void **retval)
         // Found one.
 #ifdef LWPDEBUG
         cprintf("[t_join] ZOMBIE %p %d\n", curproc, thread);
+        cprintf("[t_join] retval %p %d %d\n", curproc, thread, (int)*retval);
 #endif
 
         *retval = p->retval;
@@ -579,7 +578,13 @@ thread_join(thread_t thread, void **retval)
     }
 
     // Wait for children to exit.  (See wakeup1 call in proc_exit.)
+#ifdef LWPDEBUG
+    cprintf("[t_join] sleep before %p %d\n", curproc, thread);
+#endif
     sleep(curproc, &ptable.lock);  //DOC: wait-sleep
+#ifdef LWPDEBUG
+    cprintf("[t_join] sleep after %p %d\n", curproc, thread);
+#endif
   }
 }
 
