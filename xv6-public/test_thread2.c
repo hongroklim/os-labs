@@ -2,7 +2,7 @@
 #include "stat.h"
 #include "user.h"
 
-#define NUM_THREAD 10
+#define NUM_THREAD 2
 #define NTEST 14
 
 // Show race condition
@@ -45,13 +45,6 @@ volatile int gcnt;
 int gpipe[2];
 
 int (*testfunc[NTEST])(void) = {
-  racingtest,
-  basictest,
-  jointest1,
-  jointest2,
-  stresstest,
-  exittest1,
-  exittest2,
   forktest,
   exectest,
   sbrktest,
@@ -59,15 +52,15 @@ int (*testfunc[NTEST])(void) = {
   pipetest,
   sleeptest,
   stridetest,
+  racingtest,
+  basictest,
+  jointest1,
+  jointest2,
+  stresstest,
+  exittest1,
+  exittest2,
 };
 char *testname[NTEST] = {
-  "racingtest",
-  "basictest",
-  "jointest1",
-  "jointest2",
-  "stresstest",
-  "exittest1",
-  "exittest2",
   "forktest",
   "exectest",
   "sbrktest",
@@ -75,6 +68,13 @@ char *testname[NTEST] = {
   "pipetest",
   "sleeptest",
   "stridetest",
+  "racingtest",
+  "basictest",
+  "jointest1",
+  "jointest2",
+  "stresstest",
+  "exittest1",
+  "exittest2",
 };
 
 int
@@ -280,7 +280,7 @@ stressthreadmain(void *arg)
 int
 stresstest(void)
 {
-  const int nstress = 35000;
+  const int nstress = 3000;
   thread_t threads[NUM_THREAD];
   int i, n;
   void *retval;

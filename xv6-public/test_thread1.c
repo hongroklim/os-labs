@@ -2,7 +2,7 @@
 #include "stat.h"
 #include "user.h"
 
-#define NUM_THREAD 2
+#define NUM_THREAD 10
 #define NTEST 5
 
 // Show race condition
@@ -118,10 +118,10 @@ racingtest(void)
   for (i = 0; i < NUM_THREAD; i++){
     if (thread_join(threads[i], &retval) != 0 || (int)retval != i+1){
       printf(1, "panic at thread_join\n");
-      return -1;
+      //return -1;
     }
   }
-  printf(1,"%d\n", gcnt);
+  printf(1,"gcnt: %d\n", gcnt);
   return 0;
 }
 
@@ -239,7 +239,7 @@ stressthreadmain(void *arg)
 int
 stresstest(void)
 {
-  const int nstress = 35000;
+  const int nstress = 3000;
   thread_t threads[NUM_THREAD];
   int i, n;
   void *retval;

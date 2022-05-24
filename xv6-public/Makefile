@@ -1,5 +1,6 @@
 OBJS = \
 	proc.o\
+	vm.o\
   scheduler.o\
 	trap.o\
 	bio.o\
@@ -27,7 +28,6 @@ OBJS = \
 	trapasm.o\
 	uart.o\
 	vectors.o\
-	vm.o\
 
 # Cross-compiling (e.g., on Mac OS X)
 # TOOLPREFIX = i386-jos-elf
