@@ -191,20 +191,35 @@ fork(void)
   struct proc *np;
   struct proc *curproc = myproc();
 
+#ifdef LWPFKDEBUG
+  cprintf("[fork] (%d) start\n", curproc->pid);
+#endif
+
   // Allocate process.
   if((np = allocproc()) == 0){
+#ifdef LWPFKDEBUG
+    cprintf("[fork] (%d) allocproc fail\n", curproc->pid);
+#endif
     return -1;
   }
 
   // Copy process state from proc.
-  if((np->pgdir = copyuvm(curproc->pgdir, curproc->sz)) == 0){
+#ifdef LWPFKDEBUG
+    cprintf("[fork] (%d) %d sz %d\n", curproc->pid, np->pid, curproc->sz);
+#endif
+  if((np->pgdir = copyuvm(curproc->pgdir, curproc->sz, curproc->sksz)) == 0){
+#ifdef LWPFKDEBUG
+    cprintf("[fork] (%d) %d copyuvm fail\n", curproc->pid, np->pid);
+#endif
     kfree(np->kstack);
     np->kstack = 0;
     np->state = UNUSED;
     return -1;
   }
   np->sz = curproc->sz;
+  np->sksz = curproc->sksz;
   np->parent = curproc;
+  np->oproc = curproc->oproc;
   *np->tf = *curproc->tf;
 
   // Clear %eax so that fork returns 0 in the child.
@@ -224,10 +239,15 @@ fork(void)
 
   acquire(&ptable.lock);
 
-  qpush(np);
+  if(np->oproc == 0)
+    qpush(np);
   np->state = RUNNABLE;
 
   release(&ptable.lock);
+
+#ifdef LWPFKDEBUG
+  cprintf("[fork] (%d) %d end\n", curproc->pid, np->pid);
+#endif
 
   return pid;
 }
@@ -346,7 +366,7 @@ thread_create(thread_t *thread, void* (*start_routine)(void *), void *arg)
   struct proc *curproc = myproc();
 
 #ifdef LWPDEBUG
-  cprintf("[t_create] start from %p\n", curproc);
+  cprintf("[t_create] (%d) start\n", curproc->pid);
 #endif
 
   // Avoid double-mark in stack index
@@ -370,16 +390,20 @@ thread_create(thread_t *thread, void* (*start_routine)(void *), void *arg)
   if(i == NPROC){
     release(&lwpgroup.lock);
 #ifdef LWPDEBUG
-    cprintf("[t_create] no stack index\n");
+    cprintf("[t_create] (%d) no stack index\n", curproc->pid);
 #endif
     return -1;
   }
+
+#ifdef LWPDEBUG
+    cprintf("[t_create] (%d) stack index %d selected\n", curproc->pid, i);
+#endif
 
   // Allocate process
   if((np = allocproc()) == 0){
     release(&lwpgroup.lock);
 #ifdef LWPDEBUG
-    cprintf("[t_create] fail allocproc()\n");
+    cprintf("[t_create] (%d) allocproc fail\n", curproc->pid);
 #endif
     return -1;
   }
@@ -388,30 +412,35 @@ thread_create(thread_t *thread, void* (*start_routine)(void *), void *arg)
   np->oproc = curproc;
   np->lwpidx = i;
 
-
   // Based on exec()
   // Allocate stack segment
-  //sksz = (KERNBASE - ((np->lwpidx+1) * 2*PGSIZE));
-  //sksz = curproc->sz + ((np->lwpidx-1) * 2*PGSIZE);
-  sksz = curproc->sz + 2*PGSIZE;
-#ifdef LWPDEBUG
-  cprintf("[t_create] allocuvm %p %p %d\n", np->oproc, np, np->lwpidx);
-#endif
+  sksz = PGROUNDUP(KERNBASE - ((np->lwpidx+1) * 2*PGSIZE));
+
   if((sksz = allocuvm(curproc->pgdir, sksz, sksz + 2*PGSIZE)) == 0){
     kfree(np->kstack);
     np->kstack = 0;
     np->state = UNUSED;
-#ifdef LWPDEBUG
-    cprintf("[t_create] allocuvm fail\n");
-#endif
     release(&lwpgroup.lock);
+
+#ifdef LWPDEBUG
+    cprintf("[t_create] (%d) %d allocuvm fail on %d\n", np->oproc->pid, np->pid, np->lwpidx);
+#endif
+
     return -1;
   }
   clearpteu(curproc->pgdir, (char*)(sksz - 2*PGSIZE));
   sp = sksz;
 
-  // Update curproc
-  curproc->sz = sksz;
+#ifdef LWPDEBUG
+  cprintf("[t_create] (%d) %d allocuvm on %d, %d\n", np->oproc->pid, np->pid, np->lwpidx, sksz);
+  cprintf("[t_create] (%d) %d sz: %d, sksz: %d\n", np->oproc->pid, np->pid, np->oproc->sz, sksz);
+#endif
+
+  // Increase curproc if necessary
+  /*
+  if(curproc->sz < sksz)
+    curproc->sz = sksz;
+  */
 
   release(&lwpgroup.lock);
 
@@ -425,10 +454,10 @@ thread_create(thread_t *thread, void* (*start_routine)(void *), void *arg)
     kfree(np->kstack);
     np->kstack = 0;
     np->state = UNUSED;
-
     deallocuvm(curproc->pgdir, sksz + 2*PGSIZE, sksz);
+
 #ifdef LWPDEBUG
-    cprintf("[t_create] copyout fail\n");
+    cprintf("[t_create] (%d) copyout fail\n", curproc->pid);
 #endif
     return -1;
   }
@@ -436,7 +465,7 @@ thread_create(thread_t *thread, void* (*start_routine)(void *), void *arg)
   // Update proc
   np->pgdir = curproc->pgdir;
   np->sz = sksz;
-  np->sksz = sksz;
+  np->sksz = sksz - 2*PGSIZE;
   np->parent = curproc;
   np->schproc = schproc(curproc);
   safestrcpy(np->name, curproc->name, sizeof(curproc->name));
@@ -461,7 +490,7 @@ thread_create(thread_t *thread, void* (*start_routine)(void *), void *arg)
   *thread = np->pid;
 
 #ifdef LWPDEBUG
-  cprintf("[t_create] end %p %d\n", curproc, np->pid);
+  cprintf("[t_create] (%d) end %d\n", curproc->pid, np->pid);
 #endif
   return 0;
 }
@@ -497,7 +526,7 @@ thread_exit(void *retval)
   // Parent might be sleeping in wait().
   wakeup1(curproc->oproc);
 
-  // Pass abandoned children to init.
+  // Pass abandoned children to oproc.
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
     if(p->oproc == curproc){
       p->parent = curproc->oproc;
@@ -523,7 +552,7 @@ thread_join(thread_t thread, void **retval)
   struct proc *curproc = myproc();
 
 #ifdef LWPDEBUG
-  cprintf("[t_join] start %p %d\n", curproc, thread);
+  cprintf("[t_join  ] (%d) start %d\n", curproc->pid, thread);
 #endif
   
   acquire(&ptable.lock);
@@ -536,24 +565,26 @@ thread_join(thread_t thread, void **retval)
       exist = 1;
 
 #ifdef LWPDEBUG
-  cprintf("[t_join] exist %p %d\n", curproc, p->pid);
+  cprintf("[t_join  ] (%d) exist %d\n", curproc->pid, p->pid);
 #endif
 
       if(p->state == ZOMBIE){
         // Found one.
+        *retval = p->retval;
+
 #ifdef LWPDEBUG
-        cprintf("[t_join] ZOMBIE %p %d\n", curproc, thread);
-        cprintf("[t_join] retval %p %d %d\n", curproc, thread, (int)*retval);
+        cprintf("[t_join  ] (%d) ZOMBIE %d\n", curproc->pid, thread);
+        cprintf("[t_join  ] (%d) deallocuvm on %d, %d\n", curproc->pid, p->lwpidx, p->sksz);
 #endif
 
-        *retval = p->retval;
         p->oproc = 0;
         p->schproc = 0;
         p->schidx = 0;
         p->lwpidx = 0;
         kfree(p->kstack);
         p->kstack = 0;
-        deallocuvm(curproc->pgdir, curproc->sksz + 2*PGSIZE, curproc->sksz);
+        deallocuvm(p->pgdir, p->sksz + 2*PGSIZE, p->sksz);
+        p->sksz = 0;
         p->pid = 0;
         p->parent = 0;
         p->name[0] = 0;
@@ -562,7 +593,8 @@ thread_join(thread_t thread, void **retval)
         release(&ptable.lock);
 
 #ifdef LWPDEBUG
-        cprintf("[t_join] end %p %d\n", curproc, thread);
+        cprintf("[t_join  ] (%d) retval of %d is %d\n", curproc->pid, thread, (int)*retval);
+        cprintf("[t_join  ] (%d) end %d\n", curproc->pid, thread);
 #endif
 
         return 0;
@@ -571,19 +603,21 @@ thread_join(thread_t thread, void **retval)
       }
     }
 
+#ifdef LWPDEBUG
+    cprintf("[t_join  ] (%d) ZOMBIE not %d\n", curproc->pid, thread);
+#endif
+
     // No point waiting if we don't have a thread.
     if(!exist || curproc->killed){
       release(&ptable.lock);
       return -1;
     }
 
-    // Wait for children to exit.  (See wakeup1 call in proc_exit.)
+    // Wait for oproc to join.
+    sleept(curproc, &ptable.lock);
+
 #ifdef LWPDEBUG
-    cprintf("[t_join] sleep before %p %d\n", curproc, thread);
-#endif
-    sleep(curproc, &ptable.lock);  //DOC: wait-sleep
-#ifdef LWPDEBUG
-    cprintf("[t_join] sleep after %p %d\n", curproc, thread);
+    cprintf("[t_join  ] sleep after %d %d\n", curproc->pid, thread);
 #endif
   }
 }
@@ -632,9 +666,6 @@ scheduler(void)
 
     // Loop over process table looking for process to run.
     acquire(&ptable.lock);
-    //for(p = ptable.proc; p < &ptable.proc[NPROC]; p++){
-    //  if(p->state != RUNNABLE)
-    //    continue;
 
     p = nextproc();
     if(p != 0){
@@ -765,10 +796,11 @@ forkret(void)
   // Return to "caller", actually trapret (see allocproc).
 }
 
+
 // Atomically release lock and sleep on chan.
 // Reacquires lock when awakened.
 void
-sleep(void *chan, struct spinlock *lk)
+sleep1(void *chan, struct spinlock *lk, int tsleep)
 {
   struct proc *p = myproc();
   
@@ -790,7 +822,7 @@ sleep(void *chan, struct spinlock *lk)
   }
   // Go to sleep.
   p->chan = chan;
-  p->state = SLEEPING;
+  p->state = (tsleep == 0) ? SLEEPING : TSLEEPING;
 
   sched();
 
@@ -804,6 +836,18 @@ sleep(void *chan, struct spinlock *lk)
   }
 }
 
+void
+sleep(void *chan, struct spinlock *lk)
+{
+  sleep1(chan, lk, 0);
+}
+
+void
+sleept(void *chan, struct spinlock *lk)
+{
+  sleep1(chan, lk, 1);
+}
+
 //PAGEBREAK!
 // Wake up all processes sleeping on chan.
 // The ptable lock must be held.
@@ -813,7 +857,7 @@ wakeup1(void *chan)
   struct proc *p;
 
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-    if(p->state == SLEEPING && p->chan == chan)
+    if((p->state == SLEEPING || p->state == TSLEEPING) && p->chan == chan)
       p->state = RUNNABLE;
 }
 
@@ -839,7 +883,7 @@ kill(int pid)
     if(p->pid == pid){
       p->killed = 1;
       // Wake process from sleep if necessary.
-      if(p->state == SLEEPING)
+      if(p->state == SLEEPING || p->state == TSLEEPING)
         p->state = RUNNABLE;
       release(&ptable.lock);
       return 0;
@@ -860,6 +904,7 @@ procdump(void)
   [UNUSED]    "unused",
   [EMBRYO]    "embryo",
   [SLEEPING]  "sleep ",
+  [TSLEEPING] "tsleep",
   [RUNNABLE]  "runble",
   [RUNNING]   "run   ",
   [ZOMBIE]    "zombie"
@@ -877,7 +922,7 @@ procdump(void)
     else
       state = "???";
     cprintf("%d %s %s", p->pid, state, p->name);
-    if(p->state == SLEEPING){
+    if(p->state == SLEEPING || p->state == TSLEEPING){
       getcallerpcs((uint*)p->context->ebp+2, pc);
       for(i=0; i<10 && pc[i] != 0; i++)
         cprintf(" %p", pc[i]);

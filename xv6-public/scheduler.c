@@ -150,7 +150,7 @@ nextmlfq(void)
   if(mlfq.lastproc != 0 && mlfq.lastproc->pid == mlfq.lastpid){
     // Return the last process which hasn't ended up
     if((mlfq.lastproc->qelpsd % timeqt(mlfq.lastproc)) > 0 &&
-        mlfq.lastproc->state == RUNNABLE){
+        (mlfq.lastproc->state == RUNNABLE || mlfq.lastproc->state == TSLEEPING)){
       return mlfq.lastproc;
     }
 
@@ -165,7 +165,7 @@ nextmlfq(void)
       continue;
     
     p = mlfq.queue[lev];
-    for(;p != 0 && p->state != RUNNABLE;)
+    for(;p != 0 && (p->state != RUNNABLE && p->state != TSLEEPING);)
       p = p->qnext;
 
     if(p == 0)
@@ -174,7 +174,7 @@ nextmlfq(void)
     // When the process is found at the same level.
     if(lev == prevlev && p->pid == mlfq.lastpid){
       // Search for the next runnable process.
-      for(;p != 0 && p->state != RUNNABLE;)
+      for(;p != 0 && (p->state != RUNNABLE && p->state != TSLEEPING);)
         p = p->qnext;
 
       // If not found, run the previous one.
@@ -205,7 +205,7 @@ nextproc(void)
 
   if(stride.lastproc != 0 && stride.lastproc->pid == stride.lastpid &&
       (stride.lastproc->qelpsd % SSTICKS) > 0 &&
-      stride.lastproc->state == RUNNABLE){
+      (stride.lastproc->state == RUNNABLE || stride.lastproc->state == TSLEEPING)){
     // Return the last process which hasn't ended up
     p = stride.lastproc;
 
@@ -213,7 +213,8 @@ nextproc(void)
     // Traverse stride queue and find the minimum passes.
     ptr = stride.queue;
     for(;ptr != 0;){
-      if(ptr->state == RUNNABLE && (p == 0 || ptr->spass < p->spass))
+      if((ptr->state == RUNNABLE || ptr->state == TSLEEPING)
+           && (p == 0 || ptr->spass < p->spass))
         p = ptr;
 
       ptr = ptr->qnext;
