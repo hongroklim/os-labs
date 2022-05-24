@@ -134,6 +134,7 @@ userinit(void)
     panic("userinit: out of memory?");
   inituvm(p->pgdir, _binary_initcode_start, (int)_binary_initcode_size);
   p->sz = PGSIZE;
+  p->hpsz = PGSIZE;
   memset(p->tf, 0, sizeof(*p->tf));
   p->tf->cs = (SEG_UCODE << 3) | DPL_USER;
   p->tf->ds = (SEG_UDATA << 3) | DPL_USER;
@@ -168,16 +169,49 @@ growproc(int n)
   uint sz;
   struct proc *curproc = myproc();
 
-  sz = curproc->sz;
+  acquire(&ptable.lock);
+
+  if(curproc->oproc != 0)
+    sz = (curproc->oproc->hpsz > curproc->oproc->sz) ? curproc->oproc->hpsz : curproc->oproc->sz;
+  else
+    sz = (curproc->hpsz > curproc->sz) ? curproc->hpsz : curproc->sz;
+
+  if(curproc->lwpidx > 0)
+    sz = curproc->oproc->hpsz;
+
+#ifdef LWPFKDEBUG
+  cprintf("[growproc] (%d) start %d\n", curproc->pid, curproc->sz);
+#endif
+
   if(n > 0){
-    if((sz = allocuvm(curproc->pgdir, sz, sz + n)) == 0)
+    if((sz = allocuvm(curproc->pgdir, sz, sz + n)) == 0){
+      release(&ptable.lock);
       return -1;
+    }
   } else if(n < 0){
-    if((sz = deallocuvm(curproc->pgdir, sz, sz + n)) == 0)
+    if((sz = deallocuvm(curproc->pgdir, sz, sz + n)) == 0){
+      release(&ptable.lock);
       return -1;
+    }
   }
-  curproc->sz = sz;
+
+  if(curproc->oproc != 0){
+    curproc->oproc->hpsz = sz;
+    if(curproc->oproc->sz < sz)
+      curproc->oproc->sz = sz;
+  }
+
+  curproc->hpsz = sz;
+  if(curproc->sz < sz)
+    curproc->sz = sz;
+
+  release(&ptable.lock);
+
   switchuvm(curproc);
+
+#ifdef LWPFKDEBUG
+  cprintf("[growproc] (%d) end %d\n", curproc->pid, curproc->sz);
+#endif
   return 0;
 }
 
@@ -188,6 +222,7 @@ int
 fork(void)
 {
   int i, pid;
+  uint sz;
   struct proc *np;
   struct proc *curproc = myproc();
 
@@ -204,10 +239,11 @@ fork(void)
   }
 
   // Copy process state from proc.
+  sz = (curproc->hpsz > curproc->sz) ? curproc->hpsz : curproc->sz;
 #ifdef LWPFKDEBUG
-    cprintf("[fork] (%d) %d sz %d\n", curproc->pid, np->pid, curproc->sz);
+    cprintf("[fork] (%d) %d sz %d\n", curproc->pid, np->pid, sz);
 #endif
-  if((np->pgdir = copyuvm(curproc->pgdir, curproc->sz, curproc->sksz)) == 0){
+  if((np->pgdir = copyuvm(curproc->pgdir, sz, curproc->sksz)) == 0){
 #ifdef LWPFKDEBUG
     cprintf("[fork] (%d) %d copyuvm fail\n", curproc->pid, np->pid);
 #endif
@@ -218,6 +254,7 @@ fork(void)
   }
   np->sz = curproc->sz;
   np->sksz = curproc->sksz;
+  np->hpsz = curproc->hpsz;
   np->parent = curproc;
   np->oproc = curproc->oproc;
   *np->tf = *curproc->tf;
@@ -239,8 +276,12 @@ fork(void)
 
   acquire(&ptable.lock);
 
-  if(np->oproc == 0)
+  if(np->oproc == 0){
     qpush(np);
+  }else{
+    np->schproc = curproc->schproc;
+  }
+
   np->state = RUNNABLE;
 
   release(&ptable.lock);
@@ -317,7 +358,8 @@ wait(void)
       havekids = 1;
       if(p->state == ZOMBIE){
         // Found one.
-        qpop(p);
+        if(p->oproc == 0)
+          qpop(p);
         pid = p->pid;
         kfree(p->kstack);
         p->kstack = 0;
@@ -339,6 +381,9 @@ wait(void)
     }
 
     // Wait for children to exit.  (See wakeup1 call in proc_exit.)
+#ifdef LWPFKDEBUG
+    cprintf("[wait] (%d) sleep\n", curproc->pid);
+#endif
     sleep(curproc, &ptable.lock);  //DOC: wait-sleep
   }
 }
@@ -436,12 +481,6 @@ thread_create(thread_t *thread, void* (*start_routine)(void *), void *arg)
   cprintf("[t_create] (%d) %d sz: %d, sksz: %d\n", np->oproc->pid, np->pid, np->oproc->sz, sksz);
 #endif
 
-  // Increase curproc if necessary
-  /*
-  if(curproc->sz < sksz)
-    curproc->sz = sksz;
-  */
-
   release(&lwpgroup.lock);
 
   // Set stack segment
@@ -465,6 +504,7 @@ thread_create(thread_t *thread, void* (*start_routine)(void *), void *arg)
   // Update proc
   np->pgdir = curproc->pgdir;
   np->sz = sksz;
+  np->hpsz = curproc->hpsz;
   np->sksz = sksz - 2*PGSIZE;
   np->parent = curproc;
   np->schproc = schproc(curproc);
@@ -671,6 +711,9 @@ scheduler(void)
     if(p != 0){
       // Select next LWP if available
       p = nextlwp(p);
+#ifdef SCHDEBUG
+      //cprintf("[nextlwp] (%d)\n", p->pid);
+#endif
 
       // Switch to chosen process.  It is the process's job
       // to release ptable.lock and then reacquire it
@@ -687,7 +730,6 @@ scheduler(void)
       c->proc = 0;
     }
     release(&ptable.lock);
-
   }
 }
 

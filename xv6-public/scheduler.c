@@ -192,7 +192,7 @@ nextmlfq(void)
   mlfq.lastpid = p->pid;
 
 #ifdef SCHDEBUG
-    cprintf("nextmlfq %p %d %d\n", p, p->qlev, p->qelpsd);
+    cprintf("nextmlfq %d %d %d\n", p->pid, p->qlev, p->qelpsd);
 #endif
 
   return p;

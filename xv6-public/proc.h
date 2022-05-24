@@ -60,9 +60,13 @@ struct proc {
 
   struct proc *oproc;          // If non-zero, origin process
   struct proc *schproc;        // If non-zero, scheduled process
+
   int schidx;                  // Scheduled index
   int lwpidx;                  // If positive, LWP stack index
+
+  uint hpsz;                   // Heap size
   uint sksz;                   // Stack size
+
   void *retval;                // Return value
 };
 
