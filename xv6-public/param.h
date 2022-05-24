@@ -14,4 +14,4 @@
 
 //#define SCHDEBUG     1     // Scheduler debugger
 //#define LWPDEBUG     1     // LWP debugger
-#define LWPFKDEBUG   1       // LWP Fork debugger
+//#define LWPFKDEBUG   1       // LWP Fork debugger
