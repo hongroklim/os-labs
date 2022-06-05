@@ -35,7 +35,7 @@ xem_cond_wait(xem_t *xem)
 #endif
 
   // Prevent lost-wakeup
-  if(xem->front <= 0){
+  if(xem->value <= 0){
 #ifdef XEMDEBUG
     cprintf("[xem_cond_wait] (%d) sleep %d\n", myproc()->pid, chan);
 #endif
