@@ -849,8 +849,8 @@ sleep1(void *chan, struct spinlock *lk, int tsleep)
   if(p == 0)
     panic("sleep");
 
-  if(lk == 0)
-    panic("sleep without lk");
+  //if(lk == 0)
+  //  panic("sleep without lk");
 
   // Must acquire ptable.lock in order to
   // change p->state and then call sched.
@@ -860,7 +860,8 @@ sleep1(void *chan, struct spinlock *lk, int tsleep)
   // so it's okay to release lk.
   if(lk != &ptable.lock){  //DOC: sleeplock0
     acquire(&ptable.lock);  //DOC: sleeplock1
-    release(lk);
+    if(lk != 0)
+      release(lk);
   }
   // Go to sleep.
   p->chan = chan;
@@ -874,7 +875,8 @@ sleep1(void *chan, struct spinlock *lk, int tsleep)
   // Reacquire original lock.
   if(lk != &ptable.lock){  //DOC: sleeplock2
     release(&ptable.lock);
-    acquire(lk);
+    if(lk != 0)
+      acquire(lk);
   }
 }
 
@@ -899,8 +901,13 @@ wakeup1(void *chan)
   struct proc *p;
 
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
-    if((p->state == SLEEPING || p->state == TSLEEPING) && p->chan == chan)
+    if((p->state == SLEEPING || p->state == TSLEEPING) && p->chan == chan){
       p->state = RUNNABLE;
+#ifdef XEMDEBUG
+      if(myproc() != 0)
+        cprintf("[wakeup1] (%d) wakeup %d - %d\n", myproc()->pid, chan, p->pid);
+#endif
+    }
 }
 
 // Wake up all processes sleeping on chan.

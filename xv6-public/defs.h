@@ -146,6 +146,16 @@ void            release(struct spinlock*);
 void            pushcli(void);
 void            popcli(void);
 
+// semaphore.c
+int             xem_init(xem_t*);
+int             xem_wait(xem_t*);
+int             xem_post(xem_t*);
+int             rwlock_init(rwlock_t*);
+int             rwlock_acquire_readlock(rwlock_t*);
+int             rwlock_acquire_writelock(rwlock_t*);
+int             rwlock_release_readlock(rwlock_t*);
+int             rwlock_release_writelock(rwlock_t*);
+
 // sleeplock.c
 void            acquiresleep(struct sleeplock*);
 void            releasesleep(struct sleeplock*);
