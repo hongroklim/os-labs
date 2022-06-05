@@ -1,31 +1,41 @@
 #include "types.h"
 #include "defs.h"
 #include "param.h"
-#include "x86.h"
 #include "memlayout.h"
 #include "mmu.h"
+#include "x86.h"
 #include "proc.h"
+#include "spinlock.h"
+
+// Lock table
+struct {
+  struct spinlock guard;
+  xem_t *xtable[NPROC];
+  struct spinlock ltable[NPROC];
+} xemlock;
+
+struct spinlock*
+lock_of(xem_t *xem)
+{
+  return &xemlock.ltable[xem->lockidx];
+}
 
 void
 xem_acquire(xem_t *xem)
 {
-  pushcli();
-  while(xchg(&xem->locked, 1) != 0)
-    ;
-  __sync_synchronize();
+  acquire(lock_of(xem));
 }
 
 void
 xem_release(xem_t *xem)
 {
-  __sync_synchronize();
-  asm volatile("movl $0, %0" : "+m" (xem->locked) : );
-  popcli();
+  release(lock_of(xem));
 }
 
 void
 xem_cond_wait(xem_t *xem)
 {
+  void *chan;
 #ifdef XEMDEBUG
   cprintf("[xem_cond_wait] (%d) start\n", myproc()->pid);
 #endif
@@ -35,7 +45,8 @@ xem_cond_wait(xem_t *xem)
   xem->rear = (xem->rear + 1) % NPROC;
   xem->queue[xem->rear] = myproc()->pid;
 
-  xem_release(xem);
+  // Get value
+  chan = (void*)xem->queue[xem->rear];
 
 #ifdef XEMDEBUG
   cprintf("[xem_cond_wait] (%d) release\n", myproc()->pid);
@@ -44,25 +55,20 @@ xem_cond_wait(xem_t *xem)
   // Prevent lost-wakeup
   if(xem->value <= 0){
 #ifdef XEMDEBUG
-    cprintf("[xem_cond_wait] (%d) sleep %d\n", myproc()->pid, (void*)xem->queue[xem->rear]);
+    cprintf("[xem_cond_wait] (%d) sleep %d\n", myproc()->pid, chan);
 #endif
-    sleept((void*)xem->queue[xem->rear], (struct spinlock*)0);
+    sleept(chan, lock_of(xem));
   }
 
 #ifdef XEMDEBUG
-  cprintf("[xem_cond_wait] (%d) acquire try\n", myproc()->pid);
-#endif
-
-  xem_acquire(xem);
-
-#ifdef XEMDEBUG
-  cprintf("[xem_cond_wait] (%d) acquire\n", myproc()->pid);
+  cprintf("[xem_cond_wait] (%d) end\n", myproc()->pid);
 #endif
 }
 
 void
 xem_cond_signal(xem_t *xem)
 {
+  void *chan;
 #ifdef XEMDEBUG
   cprintf("[xem_cond_signal] (%d) start\n", myproc()->pid);
 #endif
@@ -75,7 +81,7 @@ xem_cond_signal(xem_t *xem)
   }
 
   // Get value
-  void *chan = (void*)xem->queue[xem->front];
+  chan = (void*)xem->queue[xem->front];
 
   // Dequeue
   if(xem->front == xem->rear){
@@ -100,7 +106,7 @@ int
 xem_init(xem_t *xem)
 {
   xem->value = 1;
-  xem->locked = 0;
+  xem->lockidx = -1;
   xem->front = -1;
   xem->rear = -1;
 
@@ -113,10 +119,34 @@ xem_init(xem_t *xem)
 int
 xem_wait(xem_t *xem)
 {
+  int i;
 #ifdef XEMDEBUG
   cprintf("[xem_wait] (%d) acquire try\n", myproc()->pid);
 #endif
+
+  acquire(&xemlock.guard);
+  if(xem->lockidx == -1){
+    // Obtain the available spinlock.
+    for(;;){
+      for(i=0; i<NPROC; i++){
+        if(xemlock.xtable[i] == 0)
+          break;
+      }
+
+      // Exit loop if it is available.
+      if(i != NPROC)
+        break;
+      else
+        sleept((void*)&xemlock.guard, &xemlock.guard);
+    }
+
+    // Occupy the empty xem.
+    xemlock.xtable[i] = xem;
+    xem->lockidx = i;
+  }
   xem_acquire(xem);
+  release(&xemlock.guard);
+
 #ifdef XEMDEBUG
   cprintf("[xem_wait] (%d) acquire\n", myproc()->pid);
 #endif
@@ -146,21 +176,34 @@ xem_wait(xem_t *xem)
 int
 xem_unlock(xem_t *xem)
 {
+  int i, islast;
 #ifdef XEMDEBUG
   cprintf("[xem_unlock] (%d) acquire try\n", myproc()->pid);
 #endif
+  acquire(&xemlock.guard);
   xem_acquire(xem);
 #ifdef XEMDEBUG
   cprintf("[xem_unlock] (%d) acquire\n", myproc()->pid);
 #endif
 
+  islast = (xem->front == -1) ? 1 : 0;
+  i = xem->lockidx;
   xem->value++;
   xem_cond_signal(xem);
 
-  xem_release(xem);
+  if(islast == 1){
+    // Leave a room for other xem
+    xemlock.xtable[xem->lockidx] = 0;
+    xem->lockidx = -1;
+    wakeup((void*)&xemlock.guard);
+  }
+  release(&xemlock.ltable[i]);
+  release(&xemlock.guard);
+
 #ifdef XEMDEBUG
   cprintf("[xem_unlock] (%d) release\n", myproc()->pid);
 #endif
+
   return 0;
 }
 

@@ -2,8 +2,8 @@
 #include "stat.h"
 #include "user.h"
 
-#define LARGENUM 1000
-#define THREADS  3
+#define LARGENUM 10000
+#define THREADS  10
 #define ITER     3
 
 xem_t xem;

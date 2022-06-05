@@ -6,7 +6,7 @@ typedef unsigned int   thread_t;
 
 typedef struct {
   int value;
-  uint locked;
+  int lockidx;
   int queue[64];
   int front;
   int rear;

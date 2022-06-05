@@ -903,6 +903,8 @@ wakeup1(void *chan)
   for(p = ptable.proc; p < &ptable.proc[NPROC]; p++)
     if((p->state == SLEEPING || p->state == TSLEEPING) && p->chan == chan){
       p->state = RUNNABLE;
+      if(p->state == TSLEEPING)
+        p->chan = 0;
 #ifdef XEMDEBUG
       if(myproc() != 0)
         cprintf("[wakeup1] (%d) wakeup %d - %d\n", myproc()->pid, chan, p->pid);
