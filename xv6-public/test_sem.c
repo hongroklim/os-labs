@@ -4,7 +4,7 @@
 
 #define LARGENUM 10000
 #define THREADS  10
-#define ITER     3
+#define REP     3
 
 xem_t xem;
 
@@ -49,7 +49,7 @@ main(int argc, char *argv[])
   void *ret;
   thread_t t[THREADS];
 
-  for(int u = 0; u < ITER; u++) {
+  for(int u = 0; u < REP; u++) {
     printf(1, "1. Test without any synchronization\n");
 
     for(int i = 0; i < THREADS; ++i) {
