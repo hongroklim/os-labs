@@ -186,7 +186,8 @@ UPROGS=\
   _test_scheduler\
   _test_thread1\
   _test_thread2\
-  _test_semaphore1\
+  _test_sem\
+  _test_rwl\
 
 fs.img: mkfs README $(UPROGS)
 	./mkfs fs.img README $(UPROGS)
@@ -254,7 +255,8 @@ qemu-nox-gdb: fs.img xv6.img .gdbinit
 # check in that version.
 
 EXTRA=\
-  test_scheduler.c test_thread1.c test_thread2.c test_semaphore1.c\
+  test_scheduler.c test_thread1.c test_thread2.c\
+  test_sem.c test_rwl.c\
 	mkfs.c ulib.c user.h cat.c echo.c forktest.c grep.c kill.c\
 	ln.c ls.c mkdir.c rm.c stressfs.c usertests.c wc.c zombie.c\
 	printf.c umalloc.c\

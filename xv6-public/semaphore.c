@@ -1,68 +1,56 @@
 #include "types.h"
 #include "defs.h"
 #include "param.h"
-#include "x86.h"
 #include "memlayout.h"
 #include "mmu.h"
+#include "x86.h"
 #include "proc.h"
+#include "spinlock.h"
 
-void
-xem_acquire(xem_t *xem)
-{
-  pushcli();
-  while(xchg(&xem->locked, 1) != 0)
-    ;
-  __sync_synchronize();
-}
-
-void
-xem_release(xem_t *xem)
-{
-  __sync_synchronize();
-  asm volatile("movl $0, %0" : "+m" (xem->locked) : );
-  popcli();
-}
+// Lock table
+struct {
+  struct spinlock guard;
+  xem_t *xtable[NPROC];
+  struct spinlock ltable[NPROC];
+} xemlock;
 
 void
 xem_cond_wait(xem_t *xem)
 {
+  void *chan;
 #ifdef XEMDEBUG
   cprintf("[xem_cond_wait] (%d) start\n", myproc()->pid);
 #endif
 
   // Enqueue
   if(xem->front == -1) xem->front = 0;
-  xem->rear = (xem->rear + 1) % NPROC;
+  xem->rear = (xem->rear + 1) % XEMQSIZE;
   xem->queue[xem->rear] = myproc()->pid;
 
-  xem_release(xem);
+  // Get value
+  chan = (void*)xem->queue[xem->rear];
 
 #ifdef XEMDEBUG
   cprintf("[xem_cond_wait] (%d) release\n", myproc()->pid);
 #endif
 
   // Prevent lost-wakeup
-  if(xem->value <= 0){
+  if(xem->front <= 0){
 #ifdef XEMDEBUG
-    cprintf("[xem_cond_wait] (%d) sleep %d\n", myproc()->pid, (void*)xem->queue[xem->rear]);
+    cprintf("[xem_cond_wait] (%d) sleep %d\n", myproc()->pid, chan);
 #endif
-    sleept((void*)xem->queue[xem->rear], (struct spinlock*)0);
+    sleept(chan, &xemlock.ltable[xem->lockidx]);
   }
 
 #ifdef XEMDEBUG
-  cprintf("[xem_cond_wait] (%d) acquire try\n", myproc()->pid);
-#endif
-
-  xem_acquire(xem);
-
-#ifdef XEMDEBUG
-  cprintf("[xem_cond_wait] (%d) acquire\n", myproc()->pid);
+  cprintf("[xem_cond_wait] (%d) end\n", myproc()->pid);
 #endif
 }
 
 void
 xem_cond_signal(xem_t *xem)
 {
+  void *chan;
 #ifdef XEMDEBUG
   cprintf("[xem_cond_signal] (%d) start\n", myproc()->pid);
 #endif
@@ -75,14 +63,15 @@ xem_cond_signal(xem_t *xem)
   }
 
   // Get value
-  void *chan = (void*)xem->queue[xem->front];
+  chan = (void*)xem->queue[xem->front];
+  xem->queue[xem->front] = 0;
 
   // Dequeue
   if(xem->front == xem->rear){
     xem->front = -1;
     xem->rear = -1;
   }else{
-    xem->front = (xem->front+1) % NPROC;
+    xem->front = (xem->front+1) % XEMQSIZE;
   }
 
 #ifdef XEMDEBUG
@@ -100,7 +89,7 @@ int
 xem_init(xem_t *xem)
 {
   xem->value = 1;
-  xem->locked = 0;
+  xem->lockidx = -1;
   xem->front = -1;
   xem->rear = -1;
 
@@ -113,29 +102,63 @@ xem_init(xem_t *xem)
 int
 xem_wait(xem_t *xem)
 {
+  int i;
 #ifdef XEMDEBUG
   cprintf("[xem_wait] (%d) acquire try\n", myproc()->pid);
 #endif
-  xem_acquire(xem);
+
+  acquire(&xemlock.guard);
+  if(xem->lockidx == -1){
+    // Obtain the available spinlock.
+    for(;;){
+      for(i=0; i<NPROC; i++){
+        if(xemlock.xtable[i] == 0){
+#ifdef XEMDEBUG
+          cprintf("[xem_wait] (%d) index %d\n", myproc()->pid, i);
+#endif
+          break;
+        }
+      }
+
+      // Exit loop if it is available.
+      if(i != NPROC)
+        break;
+      else
+        sleept((void*)&xemlock.guard, &xemlock.guard);
+    }
+
+    // Occupy the empty xem.
+    xemlock.xtable[i] = xem;
+
+    xem->lockidx = i;
+  }else{
+#ifdef XEMDEBUG
+    cprintf("[xem_wait] (%d) existing index %d\n", myproc()->pid, xem->lockidx);
+#endif
+    i = xem->lockidx;
+  }
+  acquire(&xemlock.ltable[i]);
+  release(&xemlock.guard);
+
 #ifdef XEMDEBUG
   cprintf("[xem_wait] (%d) acquire\n", myproc()->pid);
 #endif
 
   // If the queue is full
-  if((xem->front == 0 && xem->rear == (NPROC-1))
+  if((xem->front == 0 && xem->rear == (XEMQSIZE-1))
       || (xem->front == xem->rear+1)){
+    release(&xemlock.ltable[xem->lockidx]);
 #ifdef XEMDEBUG
   cprintf("[xem_wait] (%d) queue is full\n", myproc()->pid);
 #endif
-    xem_release(xem);
     return -1;
   }
 
-  while(xem->value <= 0)
+  if(xem->value <= 0)
     xem_cond_wait(xem);
 
   xem->value--;
-  xem_release(xem);
+  release(&xemlock.ltable[i]);
 #ifdef XEMDEBUG
   cprintf("[xem_wait] (%d) release\n", myproc()->pid);
 #endif
@@ -146,21 +169,39 @@ xem_wait(xem_t *xem)
 int
 xem_unlock(xem_t *xem)
 {
+  int i, islast;
 #ifdef XEMDEBUG
   cprintf("[xem_unlock] (%d) acquire try\n", myproc()->pid);
 #endif
-  xem_acquire(xem);
+  acquire(&xemlock.guard);
+  if(xem->lockidx != -1)
+    acquire(&xemlock.ltable[xem->lockidx]);
 #ifdef XEMDEBUG
   cprintf("[xem_unlock] (%d) acquire\n", myproc()->pid);
 #endif
 
+  islast = (xem->front == -1) ? 1 : 0;
+  i = xem->lockidx;
   xem->value++;
   xem_cond_signal(xem);
 
-  xem_release(xem);
+  if(islast == 1 && i != -1){
+#ifdef XEMDEBUG
+    cprintf("[xem_unlock] (%d) index %d\n", myproc()->pid, i);
+#endif
+    // Leave a room for other xem
+    xemlock.xtable[xem->lockidx] = 0;
+    xem->lockidx = -1;
+    wakeup((void*)&xemlock.guard);
+  }
+  if(i != -1)
+    release(&xemlock.ltable[i]);
+  release(&xemlock.guard);
+
 #ifdef XEMDEBUG
   cprintf("[xem_unlock] (%d) release\n", myproc()->pid);
 #endif
+
   return 0;
 }
 
@@ -168,30 +209,172 @@ xem_unlock(xem_t *xem)
 int
 rwlock_init(rwlock_t *rwlock)
 {
+  xem_init(&rwlock->lock);
+  xem_init(&rwlock->writelock);
+  memset(rwlock->queue, 0, XEMQSIZE);
+  rwlock->readers = 0;
+  rwlock->wlowner = 0;
   return 0;
+}
+
+int
+rwlock_acquirable(int isread, rwlock_t *rwlock)
+{
+  int pid, i;
+  // The maximum number of read locks has been exceeded.
+  if(isread == 1 && rwlock->readers >= XEMQSIZE){
+#ifdef RWLDEBUG
+    cprintf("[RWL_acq] (%d) error (exceed)\n", myproc()->pid);
+#endif
+    return 0;
+  }
+
+  // The current thread already owns write lock.
+  pid = myproc()->pid;
+  if(rwlock->wlowner == pid){
+#ifdef RWLDEBUG
+    cprintf("[RWL_acq] (%d) error (dupl-w)\n", pid);
+#endif
+    return 0;
+  }
+
+  // The current thread already owns read lock.
+  for(i = 0; i < XEMQSIZE; i++){
+    if(rwlock->queue[i] == pid){
+#ifdef RWLDEBUG
+      cprintf("[RWL_acq] (%d) error (dupl-r)\n", pid);
+#endif
+      return 0;
+    }
+  }
+  
+  return 1;
 }
 
 int
 rwlock_acquire_readlock(rwlock_t *rwlock)
 {
+#ifdef RWLDEBUG
+      cprintf("[RWL_acq_r] (%d) start\n", myproc()->pid);
+#endif
+  int i;
+  xem_wait(&rwlock->lock);
+
+  if(rwlock_acquirable(1, rwlock) == 0){
+    xem_unlock(&rwlock->lock);
+#ifdef RWLDEBUG
+      cprintf("[RWL_acq_r] (%d) error\n", myproc()->pid);
+#endif
+    return -1;
+  }
+
+  // Record the current pid 
+  for(i = 0; i < XEMQSIZE; i++){
+    if(rwlock->queue[i] == 0){
+      rwlock->queue[i] = myproc()->pid;
+#ifdef RWLDEBUG
+      cprintf("[RWL_acq_r] (%d) enque %d\n", myproc()->pid, i);
+#endif
+      break;
+    }
+  }
+
+  if(i == XEMQSIZE){
+    xem_unlock(&rwlock->lock);
+#ifdef RWLDEBUG
+    cprintf("[RWL_acq_r] (%d) index not found\n", myproc()->pid);
+#endif
+    return -1;
+  }
+
+  // Increase reader count
+  rwlock->readers++;
+
+  if(rwlock->readers == 1)
+    xem_wait(&rwlock->writelock);
+
+  xem_unlock(&rwlock->lock);
+#ifdef RWLDEBUG
+      cprintf("[RWL_acq_r] (%d) end\n", myproc()->pid);
+#endif
   return 0;
 }
 
 int
 rwlock_acquire_writelock(rwlock_t *rwlock)
 {
+#ifdef RWLDEBUG
+      cprintf("[RWL_acq_w] (%d) start\n", myproc()->pid);
+#endif
+  xem_wait(&rwlock->lock);
+
+  if(rwlock_acquirable(1, rwlock) == 0){
+    xem_unlock(&rwlock->lock);
+#ifdef RWLDEBUG
+      cprintf("[RWL_acq_w] (%d) error\n", myproc()->pid);
+#endif
+    return -1;
+  }
+  
+  xem_unlock(&rwlock->lock);
+  xem_wait(&rwlock->writelock);
+
+  rwlock->wlowner = myproc()->pid;
+#ifdef RWLDEBUG
+      cprintf("[RWL_acq_w] (%d) end\n", myproc()->pid);
+#endif
   return 0;
 }
 
 int
 rwlock_release_readlock(rwlock_t *rwlock)
 {
+  int i, pid;
+  xem_wait(&rwlock->lock);
+
+  // Erase the current pid 
+  pid = myproc()->pid;
+  for(i = 0; i < XEMQSIZE; i++){
+    if(rwlock->queue[i] == pid){
+      rwlock->queue[i] = 0;
+#ifdef RWLDEBUG
+      cprintf("[RWL_rel_r] (%d) deque %d\n", myproc()->pid, i);
+#endif
+      break;
+    }
+  }
+
+  if(i == XEMQSIZE){
+    xem_unlock(&rwlock->lock);
+#ifdef RWLDEBUG
+    cprintf("[RWL_rel_r] (%d) index not found\n", myproc()->pid);
+#endif
+    return -1;
+  }
+
+  rwlock->readers--;
+
+  if(rwlock->readers == 0)
+    xem_unlock(&rwlock->writelock);
+
+#ifdef RWLDEBUG
+      cprintf("[RWL_rel_r] (%d) readers %d\n", myproc()->pid, rwlock->readers);
+#endif
+
+  xem_unlock(&rwlock->lock);
   return 0;
 }
 
 int
 rwlock_release_writelock(rwlock_t *rwlock)
 {
+  rwlock->wlowner = 0;
+
+#ifdef RWLDEBUG
+      cprintf("[RWL_rel_w] (%d) end\n", myproc()->pid);
+#endif
+
+  xem_unlock(&rwlock->writelock);
   return 0;
 }
 
