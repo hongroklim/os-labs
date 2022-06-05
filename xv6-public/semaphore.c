@@ -35,7 +35,7 @@ xem_cond_wait(xem_t *xem)
 #endif
 
   // Prevent lost-wakeup
-  if(xem->front <= 0){
+  if(xem->value <= 0){
 #ifdef XEMDEBUG
     cprintf("[xem_cond_wait] (%d) sleep %d\n", myproc()->pid, chan);
 #endif
@@ -308,7 +308,7 @@ rwlock_acquire_writelock(rwlock_t *rwlock)
 #endif
   xem_wait(&rwlock->lock);
 
-  if(rwlock_acquirable(1, rwlock) == 0){
+  if(rwlock_acquirable(0, rwlock) == 0){
     xem_unlock(&rwlock->lock);
 #ifdef RWLDEBUG
       cprintf("[RWL_acq_w] (%d) error\n", myproc()->pid);
