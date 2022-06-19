@@ -165,7 +165,7 @@ filepread(struct file *f, char *addr, int n, int off)
     return -1;
   if(f->type == FD_INODE){
     ilock(f->ip);
-    r = readi(f->ip, addr, f->off, n);
+    r = readi(f->ip, addr, off, n);
     iunlock(f->ip);
     return r;
   }
@@ -196,7 +196,7 @@ filepwrite(struct file *f, char *addr, int n, int off)
 
       begin_op();
       ilock(f->ip);
-      r = writei(f->ip, addr + i, f->off, n1);
+      r = writei(f->ip, addr + i, off, n1);
       iunlock(f->ip);
       end_op();
 

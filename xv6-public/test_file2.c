@@ -3,9 +3,13 @@
 #include "user.h"
 #include "fcntl.h"
 
-#define DEBUG
-#define N_STRESS 0
-#define FILE_SIZE (1024)
+//#define DEBUG
+#define N_STRESS 2
+#define FILE_SIZE (128)
+
+#define REP 10
+#define NTHREADS 10
+#define READERS_RATIO 0.9
 
 #define CHARS_LEN 62
 char CHARACTERS[CHARS_LEN+1] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
@@ -14,6 +18,11 @@ int test_init_destroy(const char* file_name);
 int test_write_read(const char* file_name);
 int test_stress(const char* file_name);
 int test_race(const char* file_name);
+
+void * test_thread_pwrite(void *arg);
+void * test_thread_pread(void *arg);
+
+thread_safe_guard *race_guard;
 
 int
 main(int argc, char *argv[])
@@ -53,9 +62,7 @@ main(int argc, char *argv[])
     exit();
   }else{
     printf(1, "test_race ok\n");
-  }
-
-  exit();
+  } exit();
 }
 
 int
@@ -77,14 +84,13 @@ test_init_destroy(const char* file_name)
   // Destroy
   thread_safe_guard_destroy(file_guard);
 
-  return 0;
-}
+  return 0; }
 
 int
 test_write_read(const char* file_name)
 {
   int buf_size, fd, size, off, i;
-  buf_size = 64;
+  buf_size = 32;
   char buf[buf_size];
   thread_safe_guard *file_guard;
 
@@ -103,9 +109,6 @@ test_write_read(const char* file_name)
     // Set buffer
     memset(buf, 0, buf_size);
     for(i = 0; i < buf_size; i++)
-#ifdef DEBUG
-      printf(1, "%c", buf[i]);
-#endif
       buf[i] = CHARACTERS[(off+i)%CHARS_LEN];
 
     // Write
@@ -137,6 +140,10 @@ test_write_read(const char* file_name)
 
     // Match
     for(i = 0; i < size; i++){
+#ifdef DEBUG
+      printf(1, "%c", buf[i]);
+#endif
+
       if(buf[i] != CHARACTERS[(off+i)%CHARS_LEN]){
         printf(1, "\nmatch fail at %d (expected %c, but %c)\n",
             off+i, buf[i], CHARACTERS[(off+i)%CHARS_LEN]);
@@ -145,6 +152,9 @@ test_write_read(const char* file_name)
         return -1;
       }
     }
+#ifdef DEBUG
+      printf(1, "\n");
+#endif
 
     size = buf_size;
     off -= buf_size;
@@ -159,11 +169,115 @@ test_write_read(const char* file_name)
 int
 test_stress(const char* file_name)
 {
-  return 0;
+  return test_write_read(file_name);
 }
 
 int
 test_race(const char* file_name)
 {
+  int fd;
+  thread_t t[NTHREADS];
+  void *ret;
+
+  fd = open(file_name, O_CREATE | O_RDWR);
+  if(fd < 0){
+    printf(1, "open fail\n");
+    return -1;
+  }
+
+  race_guard = thread_safe_guard_init(fd);
+
+  // Write first
+  if(thread_create(&t[0], test_thread_pwrite, (void *)(0)) < 0) {
+    printf(1, "panic at thread create\n");
+    thread_safe_guard_destroy(race_guard);
+    close(fd);
+    return -1;
+  }
+
+
+  if(thread_join(t[0], &ret) < 0) {
+    printf(1, "panic at thread join\n");
+    thread_safe_guard_destroy(race_guard);
+    close(fd);
+    return -1;
+  }
+
+  for(int i = 0; i < NTHREADS; ++i) {
+    void* (*start_routine)(void *) = ((NTHREADS-i) >= READERS_RATIO * NTHREADS)
+      ? test_thread_pwrite : test_thread_pread;
+
+    if(thread_create(&t[i], start_routine, (void *)(i)) < 0) {
+      printf(1, "panic at thread create\n");
+      thread_safe_guard_destroy(race_guard);
+      close(fd);
+      return -1;
+    }
+  }
+
+  for(int i = 0; i < NTHREADS; ++i) {
+    if(thread_join(t[i], &ret) < 0) {
+      printf(1, "panic at thread join\n");
+      thread_safe_guard_destroy(race_guard);
+      close(fd);
+      return -1;
+    }
+  }
+
+  thread_safe_guard_destroy(race_guard);
+  close(fd);
+
+  return 0;
+}
+
+void *
+test_thread_pwrite(void *arg)
+{
+  int id = (int)arg;
+  int buf_size, i;
+  buf_size = 128;
+
+  char buf[buf_size];
+  memset(buf, 0, buf_size);
+
+  for(i = 0; i < REP; i++){
+    if(thread_safe_pwrite(race_guard, buf, buf_size, i*buf_size) != buf_size){
+      printf(1, "pwrite fail at %d\n", i*buf_size);
+      thread_exit((void*)(-1));
+      return 0;
+    }
+
+#ifdef DEBUG
+    printf(1, "%d", id);
+#endif
+  }
+
+  thread_exit((void*)(0));
+  return 0;
+}
+
+void *
+test_thread_pread(void *arg)
+{
+  int id = (int)arg;
+  int buf_size, i;
+  buf_size = 128;
+
+  char buf[buf_size];
+
+  for(i = 0; i < REP; i++){
+    memset(buf, 0, buf_size);
+    if(thread_safe_pread(race_guard, buf, buf_size, i*buf_size) != buf_size){
+      printf(1, "pread fail at %d\n", i*buf_size);
+      thread_exit((void*)(-1));
+      return 0;
+    }
+
+#ifdef DEBUG
+    printf(1, "%d", id);
+#endif
+  }
+
+  thread_exit((void*)(0));
   return 0;
 }

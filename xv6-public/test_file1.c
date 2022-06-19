@@ -3,10 +3,9 @@
 #include "user.h"
 #include "fcntl.h"
 
-#define N_STRESS 0
-#define FILE_SIZE (16*1024*1024)  // 16MB
-//#define FILE_SIZE (80*1024)
 #define DEBUG
+#define N_STRESS 4
+#define FILE_SIZE (16*1024*1024)  // 16MB
 
 #define CHARS_LEN 62
 char CHARACTERS[CHARS_LEN+1] = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
