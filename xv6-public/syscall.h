@@ -38,3 +38,6 @@
 #define SYS_rwlock_acquire_writelock  33
 #define SYS_rwlock_release_readlock   34
 #define SYS_rwlock_release_writelock  35
+
+#define SYS_pread   36
+#define SYS_pwrite  37

@@ -17,4 +17,5 @@
 //#define LWPFKDEBUG      // LWP Fork debugger
 //#define XEMDEBUG        // Semaphore debugger
 //#define RWLDEBUG        // Reader-write lock debugger
-#define BLKDEBUG        // File block debugger
+//#define BLKDEBUG        // File block debugger
+#define PRWDEBUG        // Pread and Pwrite debugger
