@@ -37,6 +37,8 @@ int rwlock_acquire_readlock(rwlock_t*);
 int rwlock_acquire_writelock(rwlock_t*);
 int rwlock_release_readlock(rwlock_t*);
 int rwlock_release_writelock(rwlock_t*);
+int pread(int, void*, int, int);
+int pwrite(int, void*, int, int);
 
 // ulib.c
 int stat(const char*, struct stat*);
@@ -51,3 +53,7 @@ void* memset(void*, int, uint);
 void* malloc(uint);
 void free(void*);
 int atoi(const char*);
+thread_safe_guard* thread_safe_guard_init(int fd);
+int thread_safe_pread(thread_safe_guard* file_guard, void* addr, int n, int off);
+int thread_safe_pwrite(thread_safe_guard* file_guard, void* addr, int n, int off);
+void thread_safe_guard_destroy(thread_safe_guard* file_guard);

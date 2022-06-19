@@ -21,3 +21,8 @@ typedef struct {
   int readers;
   int wlowner;
 } rwlock_t;
+
+typedef struct {
+  int fd;
+  rwlock_t rwlock;
+} thread_safe_guard;

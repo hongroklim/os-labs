@@ -169,49 +169,30 @@ growproc(int n)
   uint sz;
   struct proc *curproc = myproc();
 
-  acquire(&ptable.lock);
-
-  if(curproc->oproc != 0)
-    sz = (curproc->oproc->hpsz > curproc->oproc->sz) ? curproc->oproc->hpsz : curproc->oproc->sz;
-  else
-    sz = (curproc->hpsz > curproc->sz) ? curproc->hpsz : curproc->sz;
-
-  if(curproc->lwpidx > 0)
-    sz = curproc->oproc->hpsz;
-
 #ifdef LWPFKDEBUG
   cprintf("[growproc] (%d) start %d\n", curproc->pid, curproc->sz);
 #endif
 
+  sz = curproc->sz;
   if(n > 0){
-    if((sz = allocuvm(curproc->pgdir, sz, sz + n)) == 0){
-      release(&ptable.lock);
+    if((sz = allocuvm(curproc->pgdir, sz, sz + n)) == 0)
       return -1;
-    }
   } else if(n < 0){
-    if((sz = deallocuvm(curproc->pgdir, sz, sz + n)) == 0){
-      release(&ptable.lock);
+    if((sz = deallocuvm(curproc->pgdir, sz, sz + n)) == 0)
       return -1;
-    }
   }
+  curproc->sz = sz;
 
-  if(curproc->oproc != 0){
-    curproc->oproc->hpsz = sz;
-    if(curproc->oproc->sz < sz)
-      curproc->oproc->sz = sz;
-  }
-
-  curproc->hpsz = sz;
-  if(curproc->sz < sz)
-    curproc->sz = sz;
-
-  release(&ptable.lock);
-
-  switchuvm(curproc);
+  // Update sz
+  //acquire(&ptable.lock);
+  //release(&ptable.lock);
 
 #ifdef LWPFKDEBUG
   cprintf("[growproc] (%d) end %d\n", curproc->pid, curproc->sz);
 #endif
+
+  switchuvm(curproc);
+
   return 0;
 }
 
