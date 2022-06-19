@@ -120,7 +120,7 @@ int test_read(const char *file_name){
       // Matching
       if(str[i] != CHARACTERS[(offset+i)%CHARS_LEN]){
         printf(1, "\nmatch fail at %d (expected %c, but %c)\n",
-            i, str[i], CHARACTERS[(offset+i)%CHARS_LEN]);
+            offset+i, str[i], CHARACTERS[(offset+i)%CHARS_LEN]);
         close(fd);
         return -1;
       }

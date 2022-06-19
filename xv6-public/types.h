@@ -24,5 +24,5 @@ typedef struct {
 
 typedef struct {
   int fd;
-  xem_t xem;
+  rwlock_t rwlock;
 } thread_safe_guard;
