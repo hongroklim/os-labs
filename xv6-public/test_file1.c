@@ -3,7 +3,7 @@
 #include "user.h"
 #include "fcntl.h"
 
-#define DEBUG
+//#define DEBUG
 #define N_STRESS 4
 #define FILE_SIZE (16*1024*1024)  // 16MB
 

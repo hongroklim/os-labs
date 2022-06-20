@@ -674,8 +674,8 @@ writei(struct inode *ip, char *src, uint off, uint n)
     return devsw[ip->major].write(ip, src, n);
   }
 
-  //if(off > ip->size || off + n < off)
-  if(off + n < off)
+  if(off > ip->size || off + n < off)
+  //if(off + n < off)
     return -1;
   if(off + n > MAXFILE*BSIZE)
     return -1;

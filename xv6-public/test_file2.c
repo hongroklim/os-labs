@@ -102,6 +102,21 @@ test_write_read(const char* file_name)
 
   file_guard = thread_safe_guard_init(fd);
 
+  // Write in plain
+  memset(buf, 0, buf_size);
+  off = 0;
+  while(off < FILE_SIZE){
+    size = (off+buf_size < FILE_SIZE) ? buf_size : (FILE_SIZE-buf_size);
+
+    if(write(fd, buf, size) != size){
+      printf(1, "write fail at %d\n", off);
+      close(fd);
+      return -1;
+    }
+
+    off += size;
+  }
+
   // Write in reverse
   size = FILE_SIZE % buf_size;
   off = FILE_SIZE - size;
@@ -233,7 +248,9 @@ test_race(const char* file_name)
 void *
 test_thread_pwrite(void *arg)
 {
+#ifdef DEBUG
   int id = (int)arg;
+#endif
   int buf_size, i;
   buf_size = 128;
 
@@ -259,7 +276,9 @@ test_thread_pwrite(void *arg)
 void *
 test_thread_pread(void *arg)
 {
+#ifdef DEBUG
   int id = (int)arg;
+#endif
   int buf_size, i;
   buf_size = 128;
 
