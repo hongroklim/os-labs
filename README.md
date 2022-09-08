@@ -1,6 +1,18 @@
 # Operating Systems - XV6
 
+This project is forked from [xv6-public](https://github.com/mit-pdos/xv6-public).
+
+## Documents
+
+1. [MLFQ and Stride Scheduling](./docs/01-MLFQ-and-Stride.md)
+1. [Light-weight Process](./docs/02-Light-weight-Process.md)
+1. [Semaphore and Read-write Lock](./docs/03-Semaphore-and-RW-Lock.md)
+1. [File System](./docs/04-File-System.md)
+
 ## Cscope
+
+Install [cscope](http://cscope.sourceforge.net) first
+and append [vim configuration](./cscope-conf.vim).
 
 ```sh
 $ cd xv6-public
